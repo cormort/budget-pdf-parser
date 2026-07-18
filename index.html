@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF 預算書智慧提取與表格生成器 (v37)</title>
+    <style>
+        body { font-family: "Microsoft JhengHei", "微軟正黑體", Arial, sans-serif; margin: 20px; line-height: 1.6; background-color: #f8f9fa; color: #343a40; }
+        .container { max-width: 1400px; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
+        p, .step-description { color: #6c757d; }
+        .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
+        .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        #fileInput { display: none; }
+        .file-label { display: inline-block; padding: 10px 15px; background-color: #007bff; color: white; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; margin-right: 10px; }
+        .file-label:hover { background-color: #0056b3; }
+        #fileNameDisplay { display: inline-block; font-style: italic; color: #555; }
+        button { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; transition: background-color 0.3s; }
+        .btn-main { background-color: #007bff; }
+        .btn-main:hover { background-color: #0056b3; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover { background-color: #218838; }
+        .btn-secondary { background-color: #6c757d; }
+        .btn-secondary:hover { background-color: #5a6268; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #output-area { width: 100%; box-sizing: border-box; height: 400px; margin-top: 10px; font-family: "Consolas", "Courier New", monospace; font-size: 14px; border: 1px solid #ced4da; border-radius: 5px; padding: 10px; resize: vertical; }
+        #tableContainer { margin-top: 20px; overflow-x: auto; }
+        table { border-collapse: collapse; width: 100%; font-size: 14px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: top; }
+        th { background-color: #e9ecef; color: #495057; font-weight: bold; }
+        .message { border-left: 4px solid; padding: 10px 15px; margin: 15px 0; border-radius: 4px; display: none; }
+        .status-message { color: #004085; background-color: #cce5ff; border-color: #b8daff; }
+        .error-message { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
+        .replace-tool { display: flex; align-items: center; gap: 5px; }
+        .replace-tool input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .replace-tool label { display: flex; align-items: center; gap: 5px; font-size: 14px; }
+        .filter-container { margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
+        .filter-container input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; width: 300px; font-size: 14px; }
+        .filter-container label { font-weight: bold; color: #495057; }
+        .filter-container button { padding: 8px 15px; }
+        #filterCount { color: #0056b3; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF 預算書智慧提取與表格生成器 (v37)</h1>
+        
+        <div class="step">
+            <h2>步驟一：提取 PDF 文字</h2>
+            <div class="controls">
+                <label for="fileInput" class="file-label">選擇 PDF 檔案</label>
+                <input type="file" id="fileInput" accept=".pdf">
+                <span id="fileNameDisplay">尚未選擇檔案</span>
+                <button id="extractBtn" class="btn-main" onclick="extractPdfText()">提取文字</button>
+            </div>
+        </div>
+        
+        <div id="statusMessage" class="message status-message"></div>
+        <div id="errorOutput" class="message error-message"></div>
+
+        <div class="step">
+            <h2>步驟二：文字清理工具箱</h2>
+            <p class="step-description">請依序使用以下工具清理文字，或手動編輯。您可以多次使用這些工具。</p>
+            <div class="controls">
+                <button class="btn-main" onclick="autoClean()" title="依序執行下列三個清理步驟">一鍵清理</button>
+                <button class="btn-secondary" onclick="breakLinesByHeadings()">依標號重新斷行</button>
+                <button class="btn-secondary" onclick="breaklineBeforeParenthesis()">在 (數字/中文數字) 前換行</button>
+                <button class="btn-secondary" onclick="cleanInternalWhitespace()">清理行內空白 (保留縮排)</button>
+                <button class="btn-secondary" onclick="stripPageNumbers()">去除頁碼</button>
+            </div>
+             <div class="controls">
+                <div class="replace-tool">
+                    <input type="text" id="findText" placeholder="尋找文字或 RegEx 模式">
+                    <input type="text" id="replaceText" placeholder="取代為...">
+                    <button class="btn-secondary" onclick="findAndReplace()">全局取代</button>
+                    <label>
+                        <input type="checkbox" id="useRegex"> 使用正規表示式 (RegEx)
+                    </label>
+                </div>
+            </div>
+            <textarea id="output-area" placeholder="提取的文字將顯示於此處，您可以在此進行編輯..."></textarea>
+        </div>
+
+        <div class="step">
+            <h2>步驟三：轉換為表格</h2>
+            <p class="step-description">清理完文字後，點擊此按鈕生成最終表格。</p>
+            <button id="convertBtn" class="btn-success" onclick="convertToTable()" disabled>轉換為表格</button>
+        </div>
+        
+        <div id="tableContainer">
+            <p>最終表格將會顯示於此處。</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
+        
+        // ----- DOM cache -----
+        const ui = {
+            fileInput: document.getElementById('fileInput'),
+            fileNameDisplay: document.getElementById('fileNameDisplay'),
+            outputArea: document.getElementById('output-area'),
+            errorOutput: document.getElementById('errorOutput'),
+            statusMessage: document.getElementById('statusMessage'),
+            extractBtn: document.getElementById('extractBtn'),
+            convertBtn: document.getElementById('convertBtn'),
+            tableContainer: document.getElementById('tableContainer'),
+            findTextInput: document.getElementById('findText'),
+            replaceTextInput: document.getElementById('replaceText'),
+            useRegexCheckbox: document.getElementById('useRegex'),
+            filterInput: null,
+            filterBtn: null,
+            filterCount: null,
+            resultTable: null,
+        };
+        ui.fileInput.addEventListener('change', () => { ui.fileNameDisplay.textContent = (ui.fileInput.files && ui.fileInput.files.length > 0) ? `已選擇：${ui.fileInput.files[0].name}` : '尚未選擇檔案'; });
+        function showMessage(element, text) { hideMessages(); element.textContent = text; element.style.display = 'block'; }
+        function hideMessages() { ui.statusMessage.style.display = 'none'; ui.errorOutput.style.display = 'none'; }
+
+        async function extractPdfText() {
+            hideMessages();
+            ui.outputArea.value = ''; ui.tableContainer.innerHTML = '<p>最終表格將會顯示於此處。</p>';
+            ui.extractBtn.disabled = true; ui.convertBtn.disabled = true;
+            if (!ui.fileInput.files || ui.fileInput.files.length === 0) { showMessage(ui.errorOutput, '請先選擇一個 PDF 文件！'); ui.extractBtn.disabled = false; return; }
+            showMessage(ui.statusMessage, '正在讀取檔案...');
+            const file = ui.fileInput.files[0]; const typedarray = new Uint8Array(await file.arrayBuffer());
+            try {
+                const pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
+                let fullTextOutput = '';
+                const Y_TOLERANCE = 3;
+                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                    showMessage(ui.statusMessage, `正在處理第 ${i} / ${pdfDoc.numPages} 頁...`);
+                    const page = await pdfDoc.getPage(i); const textContent = await page.getTextContent();
+                    const items = textContent.items;
+                    // O(n) single-pass clustering using sorted-by-y approach
+                    const sorted = items.map(it => ({ y: it.transform[5], x: it.transform[4], str: it.str }))
+                        .sort((a, b) => b.y - a.y);
+                    const groups = [];
+                    for (const s of sorted) {
+                        if (groups.length > 0 && Math.abs(groups[groups.length - 1].yRef - s.y) <= Y_TOLERANCE) {
+                            groups[groups.length - 1].items.push(s);
+                        } else {
+                            groups.push({ yRef: s.y, items: [s] });
+                        }
+                    }
+                    for (const g of groups) {
+                        g.items.sort((a, b) => a.x - b.x);
+                        fullTextOutput += g.items.map(it => it.str).join('') + '\n';
+                    }
+                }
+                ui.outputArea.value = fullTextOutput.trim();
+                showMessage(ui.statusMessage, `提取完成！您現在可以在下方的文字區進行編輯與清理。`);
+                ui.convertBtn.disabled = false;
+            } catch (err) {
+                console.error("提取 PDF 時發生錯誤:", err);
+                showMessage(ui.errorOutput, `提取 PDF 時發生錯誤：${err.message}${err.name === 'PasswordException' ? ' (文件可能已加密)' : ''}`);
+            } finally { ui.extractBtn.disabled = false; }
+        }
+
+        function findAndReplace() {
+            const findText = ui.findTextInput.value; const replaceText = ui.replaceTextInput.value; const useRegex = ui.useRegexCheckbox.checked;
+            if (!findText) { showMessage(ui.errorOutput, "「尋找文字」欄位不能為空。"); return; }
+            const originalText = ui.outputArea.value; let regex;
+            try {
+                if (useRegex) { regex = new RegExp(findText, 'g'); } else { regex = new RegExp(findText.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g'); }
+                const newText = originalText.replace(regex, replaceText);
+                const replacementsCount = (originalText.match(regex) || []).length;
+                ui.outputArea.value = newText;
+                showMessage(ui.statusMessage, `完成！共取代了 ${replacementsCount} 處。`);
+            } catch (e) { showMessage(ui.errorOutput, "正規表示式錯誤：" + e.message); }
+        }
+
+        function splitAtPeriodOutsideParens(text) {
+            let depth = 0;
+            const out = [];
+            for (let i = 0; i < text.length; i++) {
+                const c = text[i];
+                if (c === '（' || c === '(') depth++;
+                else if ((c === '）' || c === ')') && depth > 0) depth--;
+                out.push(c);
+                if (c === '。' && depth === 0) out.push('\n');
+            }
+            return out.join('');
+        }
+
+        function breakLinesByHeadings() {
+            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            let singleLine = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            const headingRegex = new RegExp(
+                '(?<=^|\\s)(' +
+                    '[壹貳參肆伍陸柒捌玖拾]、|' +
+                    '[一二三四五六七八九十]、|' +
+                    '[^\\s－，。：、]+(?:、[^\\s－，。：、]+)*－|' +
+                    '\\d+\\.(?!\\d)' +
+                ')',
+                'g'
+            );
+            singleLine = singleLine.replace(headingRegex, '\n$1');
+            singleLine = singleLine.replace(/\n([壹貳參肆伍陸柒捌玖拾]、)/g, '\n\n$1');
+            singleLine = splitAtPeriodOutsideParens(singleLine);
+            ui.outputArea.value = singleLine.trim();
+            showMessage(ui.statusMessage, "已根據標號與句末「。」重新斷行 (v36)。");
+        }
+
+        function breaklineBeforeParenthesis() {
+            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            const regex = /(\(\d{1,2}\)|\([一二三四五六七八九十]+\))/g;
+            ui.outputArea.value = text.replace(regex, '\n  $1');
+            showMessage(ui.statusMessage, "已在所有 (1-99的數字/中文數字) 前插入換行與縮排。");
+        }
+
+        function cleanInternalWhitespace() {
+            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            const lines = text.split('\n');
+            const cleanedLines = lines.map(line => {
+                const match = line.match(/^(\s*)/); const leadingWhitespace = match ? match[1] : '';
+                const content = line.substring(leadingWhitespace.length); const cleanedContent = content.replace(/\s+/g, ' ').trim();
+                return leadingWhitespace + cleanedContent;
+            });
+            ui.outputArea.value = cleanedLines.join('\n');
+            showMessage(ui.statusMessage, "已清理行內多餘空白，並保留行首縮排。");
+        }
+
+        function stripPageNumbers() {
+            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            const lines = text.split('\n');
+            const pageRegex = /^[\s　]*[0-9０-９]+[-－‐–—][0-9０-９]+[\s　]*$/;
+            const headerNoise = ['農業部', '農業發展基金', '基金用途明細表說明'];
+            const dateHeaderRegex = /^中華民國[\s　]*[0-9０-９]+[\s　]*年度$/;
+            let count = 0;
+            const filteredLines = lines.filter(line => {
+                const t = line.trim();
+                if (pageRegex.test(t) || headerNoise.includes(t) || dateHeaderRegex.test(t)) { count++; return false; }
+                return true;
+            });
+            ui.outputArea.value = filteredLines.join('\n');
+            showMessage(ui.statusMessage, `已去除 ${count} 行頁碼與頁首標題。`);
+        }
+
+        function autoClean() {
+            if (!ui.outputArea.value) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            stripPageNumbers();
+            breakLinesByHeadings();
+            breaklineBeforeParenthesis();
+            cleanInternalWhitespace();
+            showMessage(ui.statusMessage, "已完成一鍵清理 (去除頁碼 → 依標號斷行 → 在括號前換行 → 清理行內空白)。");
+        }
+
+        // ----- Account chart (built once at module level) -----
+        const _DROPS_RE = /[\s、及－\-]/;
+        const _normalize = (str) => str
+            .replace(/（[^）]*）/g, '')
+            .replace(/\([^)]*\)/g, '')
+            .replace(/[\s、及－\-]/g, '');
+
+        const _walkMatch = (line, normName) => {
+            let pos = 0, consumed = 0, depth = 0;
+            while (pos < line.length && consumed < normName.length) {
+                const c = line[pos];
+                if (c === '（' || c === '(') { depth++; pos++; continue; }
+                if (c === '）' || c === ')') { if (depth > 0) depth--; pos++; continue; }
+                if (depth > 0) { pos++; continue; }
+                if (_DROPS_RE.test(c)) { pos++; continue; }
+                consumed++; pos++;
+            }
+            return consumed === normName.length ? line.substring(pos) : null;
+        };
+
+        const accountChartText = `1	用人費用\n11	正式員額薪資\n111	管理會委員報酬\n112	顧問人員報酬\n113	職員薪金\n114	工員工資\n115	警餉\n12	聘僱及兼職人員薪資\n121	聘用人員薪金\n122	約僱職員薪金\n123	約僱工員薪資\n124	兼職人員酬金\n13	加（夜）班費\n131	延長工時加班費\n132	夜班費\n133	誤餐費\n134	未休假加班費\n14	津貼\n141	水電津貼\n142	領班津貼\n143	僻地津貼\n144	工地津貼\n14Y	其他津貼\n15	獎金\n151	考績獎金\n152	年終獎金\n15Y	其他獎金\n16	退休及卹償金\n161	職員退休及離職金\n162	工員退休及離職金\n163	卹償金\n17	資遣費\n171	職員資遣費\n172	工員資遣費\n18	福利費\n181	分擔員工保險費\n182	分擔退休人員及其配偶暨員工眷屬保險費\n183	傷病醫藥費\n184	提撥福利金\n185	員工通勤交通費\n186	分擔輔助建屋貸款利息\n18Y	其他福利費\n19	提繳費\n191	提繳工資墊償費用\n2	服務費用\n21	水電費\n211	動力費\n212	工作場所電費\n213	宿舍電費\n214	工作場所水費\n215	宿舍水費\n216	氣體費\n21Y	其他場所水電費\n22	郵電費\n221	郵費\n222	電話費\n223	電報費\n224	數據通信費\n23	旅運費\n231	國內旅費\n232	國外旅費\n233	大陸地區旅費\n234	專力費\n235	貨物運費\n236	裝卸費\n237	港埠費\n23Y	其他旅運費\n24	印刷裝訂及公告費\n241	印刷及裝訂費\n242	廣告費\n243	公告費\n244	樣品贈送\n245	業務宣導費\n25	修理保養及保固費\n251	土地改良物修護費\n252	一般房屋修護費\n253	宿舍修護費\n254	其他建築修護費\n255	機械及設備修護費\n256	交通及運輸設備修護費\n257	雜項設備修護費\n258	其他資產修護費\n25Y	保固費\n26	保險費\n261	一般房屋保險費\n262	宿舍保險費\n263	機械及設備保險費\n264	交通及運輸設備保險費\n265	雜項設備保險費\n266	其他資產保險費\n267	現金、存款及貨物保險費\n268	責任保險費\n26Y	其他保險費\n27	一般服務費\n271	棧儲費\n272	包裝費\n273	公證費\n274	報關費\n275	理貨費\n276	佣金、匯費、經理費及手續費\n277	代理（辦）費\n278	加工費\n279	外包費\n27A	義（志）工服務費\n27D	計時與計件人員酬金\n27E	替代役待遇及給與\n27F	體育活動費\n27G	核能除役服務費\n28	專業服務費\n281	技術合作費及權利金\n282	專技人員酬金\n283	法律事務費\n284	工程及管理諮詢服務費\n285	講課鐘點、稿費、出席審查及查詢費\n286	委託調查研究費\n287	委託檢驗（定）試驗認證費\n288	委託考選訓練費\n289	試務甄選費\n28A	電腦軟體服務費\n28Y	其他專業服務費\n29	公關慰勞費\n291	公共關係費\n292	員工慰勞費\n2A	媒體政策及業務宣導費\n2A1	媒體政策及業務宣導費\n2B	推展費\n2B1	推展費\n3	材料及用品費\n31	使用材料費\n311	物料\n312	燃料\n313	油脂\n314	建築材料\n315	設備零件\n32	用品消耗\n321	辦公（事務）用品\n322	報章雜誌\n323	農業與園藝用品及環境美化費\n324	化學藥劑與實驗用品\n325	服裝\n326	食品\n327	飼料\n328	醫療用品（非醫療院所使用）\n32Y	其他用品消耗\n33	商品\n331	商品\n4	租金、償債、利息及相關手續費\n41	地租及水租\n411	一般土地租金\n412	宿舍基地租金\n413	場地租金\n42	房租\n421	一般房屋租金\n422	宿舍租金\n43	機器租金\n431	電腦租金及使用費\n432	機械及設備租金\n44	交通及運輸設備租金\n441	船租\n442	車租\n443	電信設備租金\n444	碼頭設備租金\n445	航空器租金\n446	貨櫃及車架租金\n45	雜項設備租金\n451	雜項設備租金\n46	償債、利息及相關手續費\n461	債務還本\n462	債券發行成本\n463	債務利息\n464	債券手續費\n46Y	其他利息\n5	購建固定資產、無形資產、非理財目的之長期投資及營舍與設施工程支出\n51	購建固定資產\n511	購置土地\n512	興建土地改良物\n513	擴充改良房屋建築及設備\n514	購置機械及設備\n515	購置交通及運輸設備\n516	購置雜項設備\n517	租賃資產租金\n518	租賃權益改良支出\n519	購置收藏品及傳承資產\n52	購置無形資產\n521	購置電腦軟體\n522	購置權利\n53	非理財目的之長期投資\n531	非理財目的之長期證券\n532	其他非理財目的之長期投資\n54	遞延支出\n541	遞延修繕房屋建築支出\n542	其他遞延支出\n55	營舍與設施工程支出\n551	營舍與設施工程支出\n6	稅捐及規費(強制費)\n61	土地稅\n611	土地增值稅\n612	一般土地地價稅\n613	宿舍基地地價稅\n61Y	其他土地地價稅\n62	契稅\n621	契稅\n63	房屋稅\n631	一般房屋稅\n632	宿舍房屋稅\n63Y\t其他房屋稅\n64	消費與行為稅\n641	關稅\n642\t貨物稅\n643\t證券交易稅\n644\t營業稅\n645\t印花稅\n646\t使用牌照稅\n65\t特別稅課\n651\t特別稅課\n66\t規費\n661\t行政規費與強制費\n662\t事業規費\n663\t汽車燃料使用費\n664\t商港服務費\n665\t未足額進用身障人員差額補助費\n666\t碳費\n66Y\t其他規費\n7\t會費、捐助、補助、分攤、照護、救濟與交流活動費\n71\t會費\n711\t國際組織會費\n712\t學術團體會費\n713\t職業團體會費\n72\t捐助、補助與獎助\n721\t補(協)助政府機關(構)\n722\t捐助國內團體\n723\t捐助私校\n724\t捐助個人\n725\t對外國之捐助\n726\t獎助學員生給與\n72Y\t其他捐助、補助與獎助\n73\t分攤\n731\t分擔污染防制費\n732\t分擔大樓管理費\n733\t分擔礦場保安費\n734\t分擔職業訓練費\n73Y\t分擔其他費用\n74\t補貼、獎勵、慰問、照護與救濟\n741\t補貼就業訓練津貼與貸(存)款利息\n742\t補貼收容人膳宿費、保險及資遣費\n743\t獎勵費用\n744\t慰問、照護及濟助金\n745\t醫療衛生受害救濟給付\n74Y\t其他補貼、獎勵、慰問、照護與救濟\n75\t競賽及交流活動費\n751\t技能競賽\n752\t交流活動費\n8\t短絀、賠償給付與支應退場支出\n81\t各項短絀\n811\t磅(現金分)差\n812\t呆帳及保證短絀\n813\t運輸及搬運短絀\n814\t停工短絀\n815\t損壞工作\n816\t災害短絀\n817\t資產短絀\n818\t兌換短絀\n819\t投資短絀\n81Y\t其他短絀\n82\t賠償給付\n821\t一般賠償\n822\t旅運賠償\n823\t公害賠償\n83\t支應退場支出\n831\t支應退場支出\n84\t緊急應變支出\n841\t緊急應變支出\n85\t運動彩券發行賠損支出\n851\t運動彩券發行賠損支出\n9\t其他\n91\t其他支出\n912\t取得經營不善金融機構資產\n91Y\t其他`;
+
+        const _codeToName = new Map();
+        const _chart = [];
+        const _chartByLen = { 1: [], 2: [], 3: [] };
+        accountChartText.trim().split('\n').forEach(line => {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length >= 2) {
+                const code = parts[0];
+                const name = parts.slice(1).join(' ');
+                _codeToName.set(code, name);
+                const norm = _normalize(name);
+                if (norm) {
+                    const item = { code, name, norm };
+                    _chart.push(item);
+                    const clen = code.length;
+                    if (_chartByLen[clen]) _chartByLen[clen].push(item);
+                }
+            }
+        });
+        _chart.sort((a, b) => b.norm.length - a.norm.length);
+
+        const _matchAccount = (line, predicate) => {
+            const normLine = _normalize(line);
+            for (const item of _chart) {
+                if (predicate && !predicate(item)) continue;
+                if (!item.norm) continue;
+                if (!normLine.startsWith(item.norm)) continue;
+                const rest = _walkMatch(line, item.norm);
+                if (rest !== null) return { code: item.code, name: item.name, rest };
+            }
+            return null;
+        };
+
+        const _amountPatterns = [
+            /合共\s*([\d,]+)\s*千元/,
+            /編列\s*([\d,]+)\s*千元/,
+            /([\d,]+)\s*千元/,
+        ];
+        const _extractAmount = (line) => {
+            if (!line) return '';
+            for (const p of _amountPatterns) {
+                const m = line.match(p);
+                if (m && m[1]) {
+                    const n = parseInt(m[1].replace(/,/g, ''), 10);
+                    if (!isNaN(n)) return n * 1000;
+                }
+            }
+            return '';
+        };
+
+        const _planL1Regex = /^[壹貳參肆伍陸柒捌玖拾]、/;
+        const _planL2Regex = /^[一二三四五六七八九十]、/;
+        const _numberPrefixRegex = /^\s*(\d+)\.\s*/;
+        const _parenPrefixRegex = /^\s*\((\d+|[一二三四五六七八九十]+)\)\s*/;
+
+        function convertToTable() {
+            hideMessages();
+            const text = ui.outputArea.value;
+            if (!text) {
+                showMessage(ui.errorOutput, '文字區沒有內容，無法轉換。');
+                return;
+            }
+
+            let currentPlanL1 = '', currentPlanL2 = '';
+            let currentL1 = '', currentL2 = '', currentL3 = '';
+            const rows = [];
+            const unmatchedLines = [];
+
+            const lines = text.split('\n').filter(l => l.trim() !== '');
+
+            for (const raw of lines) {
+                const line = raw.trim();
+
+                if (_planL1Regex.test(line)) {
+                    currentPlanL1 = line.replace(_planL1Regex, '').trim();
+                    currentPlanL2 = '';
+                    currentL1 = currentL2 = currentL3 = '';
+                    continue;
+                }
+                if (_planL2Regex.test(line)) {
+                    currentPlanL2 = line.replace(_planL2Regex, '').trim();
+                    currentL1 = currentL2 = currentL3 = '';
+                    continue;
+                }
+
+                let work = line, prefixKind = 'none';
+                let pm = line.match(_numberPrefixRegex);
+                if (pm) { work = line.substring(pm[0].length); prefixKind = 'number'; }
+                else {
+                    pm = line.match(_parenPrefixRegex);
+                    if (pm) { work = line.substring(pm[0].length); prefixKind = 'paren'; }
+                }
+
+                let levelPref;
+                if (prefixKind === 'none') levelPref = [1, 2, 3];
+                else if (prefixKind === 'number') levelPref = [2, 3];
+                else levelPref = [3];
+
+                let matched = null;
+                for (const lvl of levelPref) {
+                    matched = _matchAccount(work, it => it.code.length === lvl);
+                    if (matched) break;
+                }
+
+                if (!matched && prefixKind === 'number') {
+                    const normWork = _normalize(work);
+                    for (const lvl of levelPref) {
+                        for (const item of (_chartByLen[lvl] || [])) {
+                            if (item.norm.length < 5) continue;
+                            if (normWork.indexOf(item.norm) !== -1) {
+                                matched = { code: item.code, name: item.name, rest: '' };
+                                break;
+                            }
+                        }
+                        if (matched) break;
+                    }
+                }
+
+                let rowL1 = currentL1, rowL2 = currentL2, rowL3 = currentL3;
+                let description = work;
+
+                if (matched) {
+                    const clen = matched.code.length;
+                    if (clen === 1) {
+                        currentL1 = matched.name;
+                        currentL2 = currentL3 = '';
+                        rowL1 = matched.name; rowL2 = ''; rowL3 = '';
+                        let rest = matched.rest;
+                        if (rest.startsWith('－')) {
+                            rest = rest.substring(1);
+                            const l2m = _matchAccount(rest, it =>
+                                it.code.length === 2 && it.code.startsWith(matched.code));
+                            if (l2m) {
+                                currentL2 = l2m.name;
+                                rowL2 = l2m.name;
+                                rest = l2m.rest;
+                                if (rest.startsWith('－')) rest = rest.substring(1);
+                            } else {
+                                const l3m = _matchAccount(rest, it =>
+                                    it.code.length === 3 && it.code.startsWith(matched.code));
+                                if (l3m) {
+                                    const l2code = l3m.code.substring(0, 2);
+                                    currentL2 = _codeToName.get(l2code) || '';
+                                    currentL3 = l3m.name;
+                                    rowL2 = currentL2;
+                                    rowL3 = l3m.name;
+                                    rest = l3m.rest;
+                                    if (rest.startsWith('－')) rest = rest.substring(1);
+                                }
+                            }
+                        }
+                        description = rest.trim();
+                    } else if (clen === 2) {
+                        const l1code = matched.code.substring(0, 1);
+                        currentL1 = _codeToName.get(l1code) || currentL1;
+                        currentL2 = matched.name;
+                        currentL3 = '';
+                        rowL1 = currentL1; rowL2 = matched.name; rowL3 = '';
+                        let rest = matched.rest;
+                        if (rest.startsWith('－')) rest = rest.substring(1);
+                        description = rest.trim();
+                    } else {
+                        const l1code = matched.code.substring(0, 1);
+                        const l2code = matched.code.substring(0, 2);
+                        currentL1 = _codeToName.get(l1code) || currentL1;
+                        currentL2 = _codeToName.get(l2code) || currentL2;
+                        currentL3 = matched.name;
+                        rowL1 = currentL1; rowL2 = currentL2; rowL3 = matched.name;
+                        let rest = matched.rest;
+                        if (rest.startsWith('－')) rest = rest.substring(1);
+                        description = rest.trim();
+                    }
+                } else if (prefixKind === 'none' && rows.length > 0) {
+                    // 無科目、無標號 → 視為上一列說明的接續行，併入前列
+                    const prev = rows[rows.length - 1];
+                    prev.description += '\n' + line;
+                    prev.raw += '\n' + line;
+                    if (!prev.amount) prev.amount = _extractAmount(line);
+                    continue;
+                } else {
+                    rowL1 = currentL1; rowL2 = currentL2; rowL3 = '';
+                    currentL3 = '';
+                    description = work.trim();
+                    if (prefixKind === 'none') unmatchedLines.push(line);
+                }
+
+                const amount = _extractAmount(line);
+                rows.push({
+                    plan: [currentPlanL1, currentPlanL2].filter(Boolean).join(' - ') || '未分類計畫',
+                    l1Item: rowL1,
+                    l2Item: rowL2,
+                    l3Item: rowL3,
+                    amount: amount,
+                    description: description || line,
+                    raw: line
+                });
+            }
+
+            if (rows.length > 0) {
+                displayTable(rows, unmatchedLines);
+                const extra = unmatchedLines.length ? `，未匹配科目行 ${unmatchedLines.length} 筆` : '';
+                showMessage(ui.statusMessage, `成功解析 ${rows.length} 筆${extra}。`);
+            } else {
+                showMessage(ui.errorOutput, '無法從文字中解析出資料列。');
+            }
+        }
+        
+        function escapeHtml(s) {
+            return String(s == null ? '' : s)
+                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function displayTable(data, unmatchedLines) {
+            const container = ui.tableContainer;
+            if (!data || data.length === 0) {
+                container.innerHTML = "<p>未能從編輯後的文字中生成表格數據。</p>";
+                return;
+            }
+
+            // Single-pass stats
+            let withAmount = 0, l1Only = 0, l2 = 0, l3 = 0;
+            for (const r of data) {
+                if (r.amount) withAmount++;
+                if (r.l3Item) l3++;
+                else if (r.l2Item) l2++;
+                else if (r.l1Item) l1Only++;
+            }
+
+            const statsHTML = `
+                <div class="filter-container" style="flex-wrap:wrap;">
+                    <label>解析統計:</label>
+                    <span>總列數 <b>${data.length}</b></span>
+                    <span>含金額 <b>${withAmount}</b></span>
+                    <span>L1 <b>${l1Only}</b></span>
+                    <span>L2 <b>${l2}</b></span>
+                    <span>L3 <b>${l3}</b></span>
+                    <span>未匹配 <b>${(unmatchedLines || []).length}</b></span>
+                </div>`;
+
+            let unmatchedHTML = '';
+            if (unmatchedLines && unmatchedLines.length) {
+                const items = unmatchedLines.map(l => `<li>${escapeHtml(l)}</li>`).join('');
+                unmatchedHTML = `
+                    <details style="margin:10px 0; padding:10px; border:1px solid #f5c6cb; background:#fdf2f3; border-radius:4px;">
+                        <summary style="color:#721c24; cursor:pointer;">未匹配到科目的 ${unmatchedLines.length} 行 (點擊展開)</summary>
+                        <ul style="margin:8px 0 0 20px;">${items}</ul>
+                    </details>`;
+            }
+
+            const filterHTML = `
+                <div class="filter-container">
+                    <label for="filterInput">關鍵字篩選:</label>
+                    <input type="text" id="filterInput" placeholder="在此輸入文字以篩選表格內容...">
+                    <button id="filterBtn" class="btn-secondary">篩選</button>
+                    <span id="filterCount"></span>
+                </div>`;
+
+            const rowsHtml = data.map(row => `<tr>
+                <td>${escapeHtml(row.plan)}</td>
+                <td>${escapeHtml(row.l1Item)}</td>
+                <td>${escapeHtml(row.l2Item)}</td>
+                <td>${escapeHtml(row.l3Item)}</td>
+                <td style="text-align:right;">${row.amount ? row.amount.toLocaleString() : ""}</td>
+                <td style="white-space: pre-wrap;">${escapeHtml(row.description)}</td>
+                <td style="white-space: pre-wrap; color:#6c757d; font-size:12px;">${escapeHtml(row.raw || '')}</td>
+             </tr>`).join('');
+
+            container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
+                `<table id="resultTable"><thead><tr><th>計畫名稱</th><th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+
+            // Cache filter DOM references
+            ui.filterInput = document.getElementById('filterInput');
+            ui.filterBtn = document.getElementById('filterBtn');
+            ui.filterCount = document.getElementById('filterCount');
+            ui.resultTable = document.getElementById('resultTable');
+
+            const table = ui.resultTable;
+            const rows = table.getElementsByTagName('tr');
+
+            ui.filterCount.textContent = `包括 ${data.length} 列資料`;
+
+            const performFilter = () => {
+                const keyword = ui.filterInput.value.toLowerCase().trim();
+                let visibleCount = 0;
+                for (let i = 1; i < rows.length; i++) {
+                    const row = rows[i];
+                    if (row.textContent.toLowerCase().includes(keyword)) {
+                        row.style.display = "";
+                        visibleCount++;
+                    } else {
+                        row.style.display = "none";
+                    }
+                }
+                ui.filterCount.textContent = `包括 ${visibleCount} 列資料`;
+            };
+
+            ui.filterBtn.addEventListener('click', performFilter);
+            ui.filterInput.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    performFilter();
+                }
+            });
+        }
+    </script>
+</body>
+</html>
