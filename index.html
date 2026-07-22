@@ -108,12 +108,12 @@
         <div id="tab-detail" class="tab-pane">
             <div class="step">
                 <h2>數字用途明細表比較</h2>
-                <p class="step-description">上傳「基金用途明細表」（數字版，非說明）PDF——預算書細表含 前年度決算數、本年度預算數、上年度預算數；解析結果依表格計畫＋科目順序呈現。</p>
+                <p class="step-description">上傳一或多個「基金用途明細表」（數字版，非說明）PDF——預算書細表含 前年度決算數、本年度預算數、上年度預算數；決算表含 預算數、決算數。可多選檔案，解析後用「來源」下拉選擇要檢視的檔案，依表格計畫＋科目順序呈現。</p>
                 <div class="controls">
-                    <label for="fileInputD" class="file-label">選擇 PDF 檔案</label>
-                    <input type="file" id="fileInputD" accept=".pdf">
+                    <label for="fileInputD" class="file-label">選擇 PDF 檔案（可多選）</label>
+                    <input type="file" id="fileInputD" accept=".pdf" multiple>
                     <span id="fileNameDisplayD">尚未選擇檔案</span>
-                    <button id="extractBtnD" class="btn-main" onclick="parseDetailPdf()">解析數字表</button>
+                    <button id="extractBtnD" class="btn-main" onclick="parseDetailPdf()">解析</button>
                 </div>
             </div>
             <div id="statusMessageD" class="message status-message"></div>
@@ -802,7 +802,7 @@
         const _numRe = /^[\d,]+$/;
         document.getElementById('fileInputD').addEventListener('change', () => {
             const f = document.getElementById('fileInputD').files;
-            document.getElementById('fileNameDisplayD').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
+            document.getElementById('fileNameDisplayD').textContent = (f && f.length) ? `已選擇 ${f.length} 檔：${[...f].map(x => x.name).join('、')}` : '尚未選擇檔案';
         });
 
         function _expandItem(it) {
@@ -871,6 +871,8 @@
             return { name: nameParts.map(p => p[1]).join(''), amounts };
         }
 
+        let _detailSources = [];
+
         async function parseDetailPdf() {
             const el = id => document.getElementById(id);
             const show = (n, t) => { el('statusMessageD').style.display = 'none'; el('errorOutputD').style.display = 'none'; el(n).textContent = t; el(n).style.display = 'block'; };
@@ -878,18 +880,28 @@
             if (!fi.files || !fi.files.length) { show('errorOutputD', '請先選擇 PDF。'); return; }
             el('extractBtnD').disabled = true;
             try {
-                const buf = new Uint8Array(await fi.files[0].arrayBuffer());
-                const rows = await parseDetailDoc(await pdfjsLib.getDocument({ data: buf }).promise,
-                    (i, n) => show('statusMessageD', `解析第 ${i}/${n} 頁...`));
-                if (!rows.length) { show('errorOutputD', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
-                displayDetailTable(rows);
-                show('statusMessageD', `完成，共 ${rows.length} 列。`);
+                _detailSources = [];
+                for (const file of fi.files) {
+                    const buf = new Uint8Array(await file.arrayBuffer());
+                    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+                    const res = await parseDetailDoc(doc, (i, n) => show('statusMessageD', `${file.name}：第 ${i}/${n} 頁...`));
+                    if (res.rows.length) { res.fileName = file.name; _detailSources.push(res); }
+                }
+                if (!_detailSources.length) { show('errorOutputD', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
+                showDetailSource(0);
+                show('statusMessageD', `完成：載入 ${_detailSources.length} 個來源，請於下方「來源」選擇要檢視的檔案。`);
             } catch (e) { console.error(e); show('errorOutputD', '解析失敗：' + e.message); }
             finally { el('extractBtnD').disabled = false; }
         }
 
+        function showDetailSource(idx) {
+            const s = _detailSources[idx];
+            displayDetailTable(s.rows, s.amtCols, idx);
+        }
+
         async function parseDetailDoc(pdfDoc, onProgress) {
             const rows = [];
+            let label = '', fmt = null;
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 if (onProgress) onProgress(i, pdfDoc.numPages);
                 const page = await pdfDoc.getPage(i);
@@ -903,9 +915,20 @@
                 const fund = mi >= 1 ? head[mi - 1] : '';
                 const { cols, rightCut } = _detailColumns(lines);
                 if (!cols) continue;
+                const pageFmt = '決算數' in cols ? 'decal' : 'budget';
+                if (fmt === null) {  // 鎖定第一頁的格式，避免同一檔混到兩種版面
+                    fmt = pageFmt;
+                    const ym = head.join('').match(/中華民國([0-9]+)年度/);
+                    label = (ym ? ym[1] : '') + (fmt === 'decal' ? '決算' : '預算');
+                } else if (pageFmt !== fmt) {
+                    continue;
+                }
                 _parseDetailPage(lines, cols, rightCut, fund, rows);
             }
-            return rows;
+            const amtCols = [];
+            for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
+            const unit = fmt === 'decal' ? '元' : '千元';
+            return { label: label || '來源', rows, amtCols, unit };
         }
 
         function _parseDetailPage(lines, cols, rightCut, fund, out) {
@@ -919,7 +942,13 @@
                 else if (_planL3Regex.test(name)) { p3 = name.replace(_planL3Regex, '').trim(); l1 = l2 = l3 = ''; level = '計畫'; }
                 else {
                     const m = _matchAccount(name);
-                    if (!m) continue;
+                    if (!m) {
+                        // 決算表計畫無壹/一標號：非科目又像計畫名(結尾計畫/基金) → 當計畫
+                        if (/(計畫|基金|支出)$/.test(name)) { p1 = name; p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
+                        else continue;
+                        out.push({ fund, level, plan: [p1, p2, p3].filter(Boolean).join(' - '), l1: '', l2: '', l3: '', name, amounts });
+                        continue;
+                    }
                     const clen = m.code.length;
                     if (clen === 1) { l1 = m.name; l2 = l3 = ''; }
                     else if (clen === 2) { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = m.name; l3 = ''; }
@@ -935,9 +964,10 @@
             }
         }
 
-        function displayDetailTable(data) {
+        function displayDetailTable(data, amtCols, srcIdx) {
             const cont = document.getElementById('tableContainerD');
-            const amtCols = Object.keys(data.find(r => Object.keys(r.amounts).length)?.amounts || {});
+            if (!amtCols) amtCols = Object.keys(data.find(r => Object.keys(r.amounts).length)?.amounts || {});
+            const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === srcIdx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label></div>` : '';
             const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
             const hasFund = data.some(r => r.fund);
@@ -949,13 +979,15 @@
                 <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
-            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(千元)</th>`).join('');
+            const unit = (_detailSources[srcIdx] && _detailSources[srcIdx].unit) || '千元';
+            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(${unit})</th>`).join('');
             const rowHtml = r => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td style="${r.level === '計畫' ? 'font-weight:bold;' : 'padding-left:24px;'}">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.name)}</td>
                 ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}</tr>`;
-            cont.innerHTML = filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map(rowHtml).join('')}</tbody></table>`;
+            cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map(rowHtml).join('')}</tbody></table>`;
             const el = id => document.getElementById(id);
+            if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             const rows = el('dTable').tBodies[0].rows;
             const apply = () => {
                 const f = el('dFund') ? el('dFund').value : '', p = el('dPlan').value, lv = el('dLevel').value, kw = el('dKw').value.toLowerCase().trim();
