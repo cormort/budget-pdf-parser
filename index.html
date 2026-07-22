@@ -390,6 +390,14 @@
         const _numberPrefixRegex = /^\s*(\d+)\.\s*/;
         const _parenPrefixRegex = /^\s*\((\d+|[一二三四五六七八九十]+)\)\s*/;
 
+        // 預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目
+        const _budgetType = (s) => {
+            const t = s.trim();
+            if (t === '原年度預算') return '原年度預算';
+            if (t.includes('特別預算') || t.includes('災後復原重建')) return '特別預算';
+            return '';
+        };
+
         function convertToTable() {
             hideMessages();
             const text = ui.outputArea.value;
@@ -399,7 +407,7 @@
             }
 
             let currentFund = '';
-            let currentPlanL1 = '', currentPlanL2 = '', currentPlanL3 = '';
+            let currentPlanL1 = '', currentPlanL2 = '', currentPlanL3 = '', currentBudget = '';
             let currentL1 = '', currentL2 = '', currentL3 = '';
             const rows = [];
             const unmatchedLines = [];
@@ -411,23 +419,41 @@
 
                 if (line.startsWith(FUND_MARK)) {
                     currentFund = line.substring(FUND_MARK.length).trim();
-                    currentPlanL1 = currentPlanL2 = currentPlanL3 = '';
+                    currentPlanL1 = currentPlanL2 = currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
 
                 if (_planL1Regex.test(line)) {
                     currentPlanL1 = line.replace(_planL1Regex, '').trim();
-                    currentPlanL2 = currentPlanL3 = '';
+                    currentPlanL2 = currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
                 if (_planL2Regex.test(line)) {
                     currentPlanL2 = line.replace(_planL2Regex, '').trim();
-                    currentPlanL3 = '';
+                    currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
+
+                // 預算別標題（(一)原年度預算 / (二)因應…災後復原重建，或 1./2. 形式）
+                if (!line.includes('千元')) {
+                    const mcn = line.match(_planL3Regex);
+                    const mnum = line.match(_numberPrefixRegex);
+                    let htext = null;
+                    if (mcn) htext = line.substring(mcn[0].length).trim();
+                    else if (mnum) htext = line.substring(mnum[0].length).trim();
+                    if (htext !== null) {
+                        const bt = _budgetType(htext);
+                        if (bt) {
+                            currentBudget = bt;
+                            currentL1 = currentL2 = currentL3 = '';
+                            continue;
+                        }
+                    }
+                }
+
                 if (_planL3Regex.test(line) && !line.includes('千元')) {
                     currentPlanL3 = line.replace(_planL3Regex, '').trim();
                     currentL1 = currentL2 = currentL3 = '';
@@ -539,6 +565,7 @@
                 rows.push({
                     fund: currentFund,
                     plan: [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean).join(' - ') || '未分類計畫',
+                    budget: currentBudget,
                     l1Item: rowL1,
                     l2Item: rowL2,
                     l3Item: rowL3,
@@ -609,10 +636,12 @@
                 </label>`;
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
             const hasFund = data.some(r => r.fund);
+            const hasBudget = data.some(r => r.budget);
             const filterHTML = `
                 <div class="filter-container" style="flex-wrap:wrap;">
                     ${hasFund ? selectHTML('filterFund', '基金', uniq('fund')) : ''}
                     ${selectHTML('filterPlan', '計畫名稱', uniq('plan'))}
+                    ${hasBudget ? selectHTML('filterBudget', '預算別', uniq('budget')) : ''}
                     ${selectHTML('filterL1', '一級科目', uniq('l1Item'))}
                     ${selectHTML('filterL2', '二級科目', uniq('l2Item'))}
                     ${selectHTML('filterL3', '三級科目', uniq('l3Item'))}
@@ -628,6 +657,7 @@
             const rowsHtml = data.map(row => `<tr>
                 ${hasFund ? `<td>${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
+                ${hasBudget ? `<td>${escapeHtml(row.budget)}</td>` : ''}
                 <td>${escapeHtml(row.l1Item)}</td>
                 <td>${escapeHtml(row.l2Item)}</td>
                 <td>${escapeHtml(row.l3Item)}</td>
@@ -637,7 +667,7 @@
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
-                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th>計畫名稱</th><th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th>計畫名稱</th>${hasBudget ? '<th>預算別</th>' : ''}<th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
 
             // Cache filter DOM references
             ui.filterInput = document.getElementById('filterInput');
@@ -652,7 +682,9 @@
 
             const selectDefs = [
                 ...(hasFund ? [['filterFund', 'fund']] : []),
-                ['filterPlan', 'plan'], ['filterL1', 'l1Item'],
+                ['filterPlan', 'plan'],
+                ...(hasBudget ? [['filterBudget', 'budget']] : []),
+                ['filterL1', 'l1Item'],
                 ['filterL2', 'l2Item'], ['filterL3', 'l3Item'],
             ];
             const selects = selectDefs.map(([id, key]) => [document.getElementById(id), key]);
@@ -680,7 +712,7 @@
                 }
                 const keyword = ui.filterInput.value.toLowerCase().trim();
                 if (!keyword) return true;
-                return [r.fund, r.plan, r.l1Item, r.l2Item, r.l3Item, String(r.amount), r.description, r.raw]
+                return [r.fund, r.plan, r.budget, r.l1Item, r.l2Item, r.l3Item, String(r.amount), r.description, r.raw]
                     .join('\n').toLowerCase().includes(keyword);
             };
 
@@ -709,8 +741,8 @@
             document.getElementById('exportBtn').addEventListener('click', () => {
                 const visible = data.filter(rowVisible);
                 const aoa = [
-                    [...(hasFund ? ['基金'] : []), '計畫名稱', '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明', '原始行'],
-                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.description, r.raw || '']),
+                    [...(hasFund ? ['基金'] : []), '計畫名稱', ...(hasBudget ? ['預算別'] : []), '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明', '原始行'],
+                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, ...(hasBudget ? [r.budget] : []), r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.description, r.raw || '']),
                 ];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '解析結果');

@@ -603,12 +603,23 @@ NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
 
 
+def budget_type_of(s: str):
+    """預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目。"""
+    t = s.strip()
+    if t == "原年度預算":
+        return "原年度預算"
+    if "特別預算" in t or "災後復原重建" in t:
+        return "特別預算"
+    return None
+
+
 def parse(text: str, fund: str = ""):
     rows = []
     unmatched = []
     current_plan_l1 = ""
     current_plan_l2 = ""
     current_plan_l3 = ""
+    current_budget = ""
     current_l1 = ""
     current_l2 = ""
     current_l3 = ""
@@ -620,14 +631,32 @@ def parse(text: str, fund: str = ""):
 
         if PLAN_L1_REGEX.match(line):
             current_plan_l1 = PLAN_L1_REGEX.sub("", line).strip()
-            current_plan_l2 = current_plan_l3 = ""
+            current_plan_l2 = current_plan_l3 = current_budget = ""
             current_l1 = current_l2 = current_l3 = ""
             continue
         if PLAN_L2_REGEX.match(line):
             current_plan_l2 = PLAN_L2_REGEX.sub("", line).strip()
-            current_plan_l3 = ""
+            current_plan_l3 = current_budget = ""
             current_l1 = current_l2 = current_l3 = ""
             continue
+
+        # 預算別標題（(一)原年度預算 / (二)因應…災後復原重建，或 1./2. 形式）：
+        # 取標號後文字判定，整行不含金額才視為純標題
+        if "千元" not in line:
+            _mcn = PLAN_L3_REGEX.match(line)
+            _mnum = NUMBER_PREFIX_REGEX.match(line)
+            _htext = None
+            if _mcn:
+                _htext = line[_mcn.end():].strip()
+            elif _mnum:
+                _htext = line[_mnum.end():].strip()
+            if _htext is not None:
+                _bt = budget_type_of(_htext)
+                if _bt:
+                    current_budget = _bt
+                    current_l1 = current_l2 = current_l3 = ""
+                    continue
+
         if PLAN_L3_REGEX.match(line) and "千元" not in line:
             current_plan_l3 = PLAN_L3_REGEX.sub("", line).strip()
             current_l1 = current_l2 = current_l3 = ""
@@ -760,6 +789,7 @@ def parse(text: str, fund: str = ""):
             {
                 "fund": fund,
                 "plan": plan,
+                "budget": current_budget,
                 "l1": row_l1,
                 "l2": row_l2,
                 "l3": row_l3,
@@ -799,6 +829,7 @@ def write_xlsx(rows, unmatched, out_path: Path, cleaned_text: str):
     headers = [
         "基金",
         "計畫名稱",
+        "預算別",
         "一級科目",
         "二級科目",
         "三級科目",
@@ -815,18 +846,18 @@ def write_xlsx(rows, unmatched, out_path: Path, cleaned_text: str):
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for r in rows:
-        ws.append([r.get("fund", ""), r["plan"], r["l1"], r["l2"], r["l3"], r["amount"] or "", r["description"], r["raw"]])
+        ws.append([r.get("fund", ""), r["plan"], r.get("budget", ""), r["l1"], r["l2"], r["l3"], r["amount"] or "", r["description"], r["raw"]])
 
-    widths = [18, 24, 16, 20, 18, 16, 80, 80]
+    widths = [18, 24, 12, 16, 20, 18, 16, 80, 80]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     for row in range(2, ws.max_row + 1):
-        cell = ws.cell(row=row, column=6)
+        cell = ws.cell(row=row, column=7)
         cell.number_format = "#,##0;(#,##0);-"
         cell.alignment = Alignment(horizontal="right")
-        ws.cell(row=row, column=7).alignment = Alignment(wrap_text=True, vertical="top")
         ws.cell(row=row, column=8).alignment = Alignment(wrap_text=True, vertical="top")
+        ws.cell(row=row, column=9).alignment = Alignment(wrap_text=True, vertical="top")
 
     ws.freeze_panes = "A2"
 
