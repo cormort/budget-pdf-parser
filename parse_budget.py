@@ -601,6 +601,7 @@ PLAN_L2_REGEX = re.compile(r"^[一二三四五六七八九十]、")
 PLAN_L3_REGEX = re.compile(r"^[（(][一二三四五六七八九十]+[）)]")
 NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
+CALC_NOTE_REGEX = re.compile(r"[=＝+＋\[\]％%]")
 
 
 def budget_type_of(s: str):
@@ -660,6 +661,14 @@ def parse(text: str, fund: str = ""):
         if PLAN_L3_REGEX.match(line) and "千元" not in line:
             current_plan_l3 = PLAN_L3_REGEX.sub("", line).strip()
             current_l1 = current_l2 = current_l3 = ""
+            continue
+
+        # 沒有「編列」、又帶算式符號（= + [] %）的行 → 貸款餘額/利息計算說明，
+        # 併回上一列說明，不當新科目也不抓金額
+        if rows and "編列" not in line and CALC_NOTE_REGEX.search(line):
+            prev = rows[-1]
+            prev["description"] += "\n" + line
+            prev["raw"] += "\n" + line
             continue
 
         work = line

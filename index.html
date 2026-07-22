@@ -460,6 +460,15 @@
                     continue;
                 }
 
+                // 沒有「編列」、又帶算式符號（= + [] %）的行 → 貸款餘額/利息計算說明，
+                // 併回上一列說明，不當新科目也不抓金額
+                if (rows.length > 0 && !line.includes('編列') && /[=＝+＋\[\]％%]/.test(line)) {
+                    const prev = rows[rows.length - 1];
+                    prev.description += '\n' + line;
+                    prev.raw += '\n' + line;
+                    continue;
+                }
+
                 let work = line, prefixKind = 'none';
                 let pm = line.match(_numberPrefixRegex);
                 if (pm) { work = line.substring(pm[0].length); prefixKind = 'number'; }
