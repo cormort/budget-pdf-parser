@@ -385,6 +385,8 @@
 
         const _planL1Regex = /^[壹貳參肆伍陸柒捌玖拾]、/;
         const _planL2Regex = /^[一二三四五六七八九十]、/;
+        // 中文數字括號且整行不含金額 → 子計畫標題（第三層計畫）
+        const _planL3Regex = /^[（(][一二三四五六七八九十]+[）)]/;
         const _numberPrefixRegex = /^\s*(\d+)\.\s*/;
         const _parenPrefixRegex = /^\s*\((\d+|[一二三四五六七八九十]+)\)\s*/;
 
@@ -397,7 +399,7 @@
             }
 
             let currentFund = '';
-            let currentPlanL1 = '', currentPlanL2 = '';
+            let currentPlanL1 = '', currentPlanL2 = '', currentPlanL3 = '';
             let currentL1 = '', currentL2 = '', currentL3 = '';
             const rows = [];
             const unmatchedLines = [];
@@ -409,19 +411,25 @@
 
                 if (line.startsWith(FUND_MARK)) {
                     currentFund = line.substring(FUND_MARK.length).trim();
-                    currentPlanL1 = currentPlanL2 = '';
+                    currentPlanL1 = currentPlanL2 = currentPlanL3 = '';
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
 
                 if (_planL1Regex.test(line)) {
                     currentPlanL1 = line.replace(_planL1Regex, '').trim();
-                    currentPlanL2 = '';
+                    currentPlanL2 = currentPlanL3 = '';
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
                 if (_planL2Regex.test(line)) {
                     currentPlanL2 = line.replace(_planL2Regex, '').trim();
+                    currentPlanL3 = '';
+                    currentL1 = currentL2 = currentL3 = '';
+                    continue;
+                }
+                if (_planL3Regex.test(line) && !line.includes('千元')) {
+                    currentPlanL3 = line.replace(_planL3Regex, '').trim();
                     currentL1 = currentL2 = currentL3 = '';
                     continue;
                 }
@@ -530,7 +538,7 @@
                 const amount = _extractAmount(line);
                 rows.push({
                     fund: currentFund,
-                    plan: [currentPlanL1, currentPlanL2].filter(Boolean).join(' - ') || '未分類計畫',
+                    plan: [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean).join(' - ') || '未分類計畫',
                     l1Item: rowL1,
                     l2Item: rowL2,
                     l3Item: rowL3,

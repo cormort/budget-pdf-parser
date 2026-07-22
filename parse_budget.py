@@ -597,6 +597,8 @@ def auto_clean(text: str) -> str:
 
 PLAN_L1_REGEX = re.compile(r"^[壹貳參肆伍陸柒捌玖拾]、")
 PLAN_L2_REGEX = re.compile(r"^[一二三四五六七八九十]、")
+# 中文數字括號且整行不含金額 → 視為子計畫標題（第三層計畫），如「(一)精進豬隻保險業務計畫」
+PLAN_L3_REGEX = re.compile(r"^[（(][一二三四五六七八九十]+[）)]")
 NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
 
@@ -606,6 +608,7 @@ def parse(text: str, fund: str = ""):
     unmatched = []
     current_plan_l1 = ""
     current_plan_l2 = ""
+    current_plan_l3 = ""
     current_l1 = ""
     current_l2 = ""
     current_l3 = ""
@@ -617,11 +620,16 @@ def parse(text: str, fund: str = ""):
 
         if PLAN_L1_REGEX.match(line):
             current_plan_l1 = PLAN_L1_REGEX.sub("", line).strip()
-            current_plan_l2 = ""
+            current_plan_l2 = current_plan_l3 = ""
             current_l1 = current_l2 = current_l3 = ""
             continue
         if PLAN_L2_REGEX.match(line):
             current_plan_l2 = PLAN_L2_REGEX.sub("", line).strip()
+            current_plan_l3 = ""
+            current_l1 = current_l2 = current_l3 = ""
+            continue
+        if PLAN_L3_REGEX.match(line) and "千元" not in line:
+            current_plan_l3 = PLAN_L3_REGEX.sub("", line).strip()
             current_l1 = current_l2 = current_l3 = ""
             continue
 
@@ -746,7 +754,7 @@ def parse(text: str, fund: str = ""):
                 unmatched.append(line)
 
         amount = extract_amount(line)
-        plan = " - ".join(p for p in (current_plan_l1, current_plan_l2) if p) or "未分類計畫"
+        plan = " - ".join(p for p in (current_plan_l1, current_plan_l2, current_plan_l3) if p) or "未分類計畫"
 
         rows.append(
             {
