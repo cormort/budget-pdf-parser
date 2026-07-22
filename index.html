@@ -595,10 +595,28 @@
 
             ui.filterCount.textContent = `包括 ${data.length} 列資料`;
 
-            const selects = [
+            const selectDefs = [
                 ['filterPlan', 'plan'], ['filterL1', 'l1Item'],
                 ['filterL2', 'l2Item'], ['filterL3', 'l3Item'],
-            ].map(([id, key]) => [document.getElementById(id), key]);
+            ];
+            const selects = selectDefs.map(([id, key]) => [document.getElementById(id), key]);
+
+            // 科目有隸屬關係：下層選單只列出符合上層選擇的資料列中出現過的值
+            const refreshOptions = (fromLevel) => {
+                for (let lvl = fromLevel; lvl < selects.length; lvl++) {
+                    const [sel, key] = selects[lvl];
+                    const prevValue = sel.value;
+                    let subset = data;
+                    for (let up = 0; up < lvl; up++) {
+                        const [upSel, upKey] = selects[up];
+                        if (upSel.value) subset = subset.filter(r => r[upKey] === upSel.value);
+                    }
+                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort();
+                    sel.innerHTML = `<option value="">全部</option>` +
+                        values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+                    sel.value = values.includes(prevValue) ? prevValue : '';
+                }
+            };
 
             const rowVisible = (r) => {
                 for (const [sel, key] of selects) {
@@ -621,7 +639,10 @@
             };
 
             ui.filterBtn.addEventListener('click', performFilter);
-            for (const [sel] of selects) sel.addEventListener('change', performFilter);
+            selects.forEach(([sel], lvl) => sel.addEventListener('change', () => {
+                refreshOptions(lvl + 1);
+                performFilter();
+            }));
             ui.filterInput.addEventListener('keydown', function(event) {
                 if (event.key === 'Enter') {
                     event.preventDefault();
