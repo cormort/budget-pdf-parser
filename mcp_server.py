@@ -17,13 +17,15 @@ mcp = FastMCP("budget-parser")
 
 
 @mcp.tool()
-def extract_and_clean(pdf_path: str) -> str:
+def extract_and_clean(pdf_path: str, page_from: int = 0, page_to: int = 0) -> str:
     """從預算書 PDF 提取文字並做一鍵清理（去頁碼、去頁首標題、依項目符號重新分段）。
+    page_from/page_to（1-based，含迄頁）指定頁碼範圍；留 0 則自動抓「基金用途明細表說明」章節頁。
     回傳清理後的文字，可先人工檢查或再做 regex 取代，之後交給 build_table。"""
     p = Path(pdf_path).expanduser()
     if not p.is_file():
         raise FileNotFoundError(f"找不到 PDF：{p}")
-    return pb.auto_clean(pb.extract_pdf_text(p))
+    rng = (page_from, page_to) if page_from >= 1 and page_to >= page_from else None
+    return pb.auto_clean(pb.extract_pdf_text(p, page_range=rng))
 
 
 @mcp.tool()

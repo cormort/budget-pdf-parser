@@ -425,7 +425,12 @@ SECTION_MARKER = "基金用途明細表說明"
 DATE_LINE_REGEX = re.compile(r"^中華民國\s*\d+\s*年度$")
 
 
-def extract_pdf_text(pdf_path: Path, y_tolerance: float = 3.0, section: str = SECTION_MARKER) -> str:
+def extract_pdf_text(
+    pdf_path: Path,
+    y_tolerance: float = 3.0,
+    section: str = SECTION_MARKER,
+    page_range: tuple[int, int] | None = None,
+) -> str:
     """Extract text grouping words into lines by y-position with tolerance.
 
     Without tolerance, numbers in tables (whose baselines drift by < 1 px from
@@ -442,8 +447,12 @@ def extract_pdf_text(pdf_path: Path, y_tolerance: float = 3.0, section: str = SE
             # 需整行等於標記（去空白後），避免誤抓目次頁的「基金用途明細表說明....60」
             return any(ln.replace(" ", "") == section for ln in head)
 
-        selected = [p for p, t in zip(pdf.pages, page_texts) if _in_section(t)] if section else []
-        target_pages = selected or list(pdf.pages)
+        if page_range:  # 使用者指定 (起頁, 迄頁)，1-based 含迄頁，優先於自動偵測
+            lo, hi = page_range
+            target_pages = pdf.pages[max(lo, 1) - 1 : hi]
+        else:
+            selected = [p for p, t in zip(pdf.pages, page_texts) if _in_section(t)] if section else []
+            target_pages = selected or list(pdf.pages)
         for page in target_pages:
             words = sorted(page.extract_words(), key=lambda w: (w["top"], w["x0"]))
             groups = []

@@ -50,6 +50,9 @@
                 <label for="fileInput" class="file-label">選擇 PDF 檔案</label>
                 <input type="file" id="fileInput" accept=".pdf">
                 <span id="fileNameDisplay">尚未選擇檔案</span>
+                <label>頁 <input type="number" id="pageFrom" min="1" style="width:70px; padding:8px; border:1px solid #ccc; border-radius:4px;" placeholder="起"> 到
+                <input type="number" id="pageTo" min="1" style="width:70px; padding:8px; border:1px solid #ccc; border-radius:4px;" placeholder="迄"></label>
+                <span style="color:#6c757d; font-size:13px;">（留空＝自動抓「基金用途明細表說明」章節）</span>
                 <button id="extractBtn" class="btn-main" onclick="extractPdfText()">提取文字</button>
             </div>
         </div>
@@ -128,8 +131,13 @@
                 const pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
                 const SECTION_MARKER = '基金用途明細表說明';
                 const Y_TOLERANCE = 3;
+                const pageFrom = parseInt(document.getElementById('pageFrom').value, 10) || 0;
+                const pageTo = parseInt(document.getElementById('pageTo').value, 10) || 0;
+                const useRange = pageFrom >= 1 && pageTo >= pageFrom;
+                const firstPage = useRange ? Math.min(pageFrom, pdfDoc.numPages) : 1;
+                const lastPage = useRange ? Math.min(pageTo, pdfDoc.numPages) : pdfDoc.numPages;
                 const pageLinesList = [];
-                for (let i = 1; i <= pdfDoc.numPages; i++) {
+                for (let i = firstPage; i <= lastPage; i++) {
                     showMessage(ui.statusMessage, `正在處理第 ${i} / ${pdfDoc.numPages} 頁...`);
                     const page = await pdfDoc.getPage(i); const textContent = await page.getTextContent();
                     const items = textContent.items;
@@ -150,13 +158,19 @@
                     });
                     pageLinesList.push(lines);
                 }
-                // 只保留頁首含「基金用途明細表說明」的頁（整本預算書也只抓該章節）；
-                // 頁首需整行等於標記（去空白），避免誤抓目次頁；無任何頁符合時退回全部頁面。
+                // 使用者指定頁碼範圍時直接採用；否則只保留頁首含「基金用途明細表說明」的頁
+                // （頁首需整行等於標記（去空白），避免誤抓目次頁；無任何頁符合時退回全部頁面）。
                 const inSection = lines => lines.slice(0, 6).some(ln => ln.replace(/[\s　]/g, '') === SECTION_MARKER);
-                const selected = pageLinesList.filter(inSection);
-                const usedPages = selected.length ? selected : pageLinesList;
+                let usedPages, sectionNote;
+                if (useRange) {
+                    usedPages = pageLinesList;
+                    sectionNote = `（第 ${firstPage} 到 ${lastPage} 頁，共 ${usedPages.length} 頁）`;
+                } else {
+                    const selected = pageLinesList.filter(inSection);
+                    usedPages = selected.length ? selected : pageLinesList;
+                    sectionNote = selected.length ? `（自動篩選出「${SECTION_MARKER}」章節 ${selected.length} / ${pdfDoc.numPages} 頁）` : '';
+                }
                 ui.outputArea.value = usedPages.map(lines => lines.join('\n')).join('\n').trim();
-                const sectionNote = selected.length ? `（自動篩選出「${SECTION_MARKER}」章節 ${selected.length} / ${pdfDoc.numPages} 頁）` : '';
                 showMessage(ui.statusMessage, `提取完成！${sectionNote}您現在可以在下方的文字區進行編輯與清理。`);
                 ui.convertBtn.disabled = false;
             } catch (err) {
