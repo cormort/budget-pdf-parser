@@ -126,8 +126,9 @@
             const file = ui.fileInput.files[0]; const typedarray = new Uint8Array(await file.arrayBuffer());
             try {
                 const pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
-                let fullTextOutput = '';
+                const SECTION_MARKER = '基金用途明細表說明';
                 const Y_TOLERANCE = 3;
+                const pageLinesList = [];
                 for (let i = 1; i <= pdfDoc.numPages; i++) {
                     showMessage(ui.statusMessage, `正在處理第 ${i} / ${pdfDoc.numPages} 頁...`);
                     const page = await pdfDoc.getPage(i); const textContent = await page.getTextContent();
@@ -143,13 +144,20 @@
                             groups.push({ yRef: s.y, items: [s] });
                         }
                     }
-                    for (const g of groups) {
+                    const lines = groups.map(g => {
                         g.items.sort((a, b) => a.x - b.x);
-                        fullTextOutput += g.items.map(it => it.str).join('') + '\n';
-                    }
+                        return g.items.map(it => it.str).join('');
+                    });
+                    pageLinesList.push(lines);
                 }
-                ui.outputArea.value = fullTextOutput.trim();
-                showMessage(ui.statusMessage, `提取完成！您現在可以在下方的文字區進行編輯與清理。`);
+                // 只保留頁首含「基金用途明細表說明」的頁（整本預算書也只抓該章節）；
+                // 頁首需整行等於標記（去空白），避免誤抓目次頁；無任何頁符合時退回全部頁面。
+                const inSection = lines => lines.slice(0, 6).some(ln => ln.replace(/[\s　]/g, '') === SECTION_MARKER);
+                const selected = pageLinesList.filter(inSection);
+                const usedPages = selected.length ? selected : pageLinesList;
+                ui.outputArea.value = usedPages.map(lines => lines.join('\n')).join('\n').trim();
+                const sectionNote = selected.length ? `（自動篩選出「${SECTION_MARKER}」章節 ${selected.length} / ${pdfDoc.numPages} 頁）` : '';
+                showMessage(ui.statusMessage, `提取完成！${sectionNote}您現在可以在下方的文字區進行編輯與清理。`);
                 ui.convertBtn.disabled = false;
             } catch (err) {
                 console.error("提取 PDF 時發生錯誤:", err);
@@ -224,13 +232,21 @@
         function stripPageNumbers() {
             let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
             const lines = text.split('\n');
-            const pageRegex = /^[\s　]*[0-9０-９]+[-－‐–—][0-9０-９]+[\s　]*$/;
-            const headerNoise = ['農業部', '農業發展基金', '基金用途明細表說明'];
+            const pageRegex = /^[\s　]*[0-9０-９]+(?:[-－‐–—][0-9０-９]+)?[\s　]*$/;
             const dateHeaderRegex = /^中華民國[\s　]*[0-9０-９]+[\s　]*年度$/;
+            const pureCjkRegex = /^[一-鿿]{2,10}$/;
+            // 機關名/基金名等頁首行 = 短純中文行且整份重複出現 >= 3 次，動態偵測不寫死
+            const counts = {};
+            for (const line of lines) {
+                const c = line.trim().replace(/[\s　]/g, '');
+                if (pureCjkRegex.test(c)) counts[c] = (counts[c] || 0) + 1;
+            }
             let count = 0;
             const filteredLines = lines.filter(line => {
                 const t = line.trim();
-                if (pageRegex.test(t) || headerNoise.includes(t) || dateHeaderRegex.test(t)) { count++; return false; }
+                const c = t.replace(/[\s　]/g, '');
+                if (pageRegex.test(t) || c === '基金用途明細表說明' || dateHeaderRegex.test(c)
+                    || (pureCjkRegex.test(c) && counts[c] >= 3)) { count++; return false; }
                 return true;
             });
             ui.outputArea.value = filteredLines.join('\n');

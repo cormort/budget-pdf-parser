@@ -421,7 +421,11 @@ def extract_amount(text: str):
 
 # ----- PDF extraction mirroring pdf.js y-sorted join -----
 
-def extract_pdf_text(pdf_path: Path, y_tolerance: float = 3.0) -> str:
+SECTION_MARKER = "基金用途明細表說明"
+DATE_LINE_REGEX = re.compile(r"^中華民國\s*\d+\s*年度$")
+
+
+def extract_pdf_text(pdf_path: Path, y_tolerance: float = 3.0, section: str = SECTION_MARKER) -> str:
     """Extract text grouping words into lines by y-position with tolerance.
 
     Without tolerance, numbers in tables (whose baselines drift by < 1 px from
@@ -430,7 +434,17 @@ def extract_pdf_text(pdf_path: Path, y_tolerance: float = 3.0) -> str:
     """
     with pdfplumber.open(pdf_path) as pdf:
         pages = []
-        for page in pdf.pages:
+        page_texts = [p.extract_text() or "" for p in pdf.pages]
+        # 只保留頁首含 section 標記的頁（整本預算書丟進來也只抓基金用途章節）；
+        # 沒有任何頁符合時退回全部頁面。
+        def _in_section(t: str) -> bool:
+            head = t.split("\n")[:6]
+            # 需整行等於標記（去空白後），避免誤抓目次頁的「基金用途明細表說明....60」
+            return any(ln.replace(" ", "") == section for ln in head)
+
+        selected = [p for p, t in zip(pdf.pages, page_texts) if _in_section(t)] if section else []
+        target_pages = selected or list(pdf.pages)
+        for page in target_pages:
             words = sorted(page.extract_words(), key=lambda w: (w["top"], w["x0"]))
             groups = []
             for w in words:
@@ -500,20 +514,30 @@ def clean_internal_whitespace(text: str) -> str:
     return "\n".join(out)
 
 
-FOOTER_REGEX = re.compile(r"^\s*\d+-\d+\s*$")
-HEADER_NOISE = {"農業部", "農業發展基金", "基金用途明細表說明"}
+FOOTER_REGEX = re.compile(r"^\s*\d+(-\d+)?\s*$")
 DATE_HEADER_REGEX = re.compile(r"^中華民國\s*\d+\s*年度$")
+PURE_CJK_REGEX = re.compile(r"^[一-鿿]{2,10}$")
 
 
 def strip_page_chrome(text: str) -> str:
+    lines = text.split("\n")
+    # ponytail: 機關名/基金名等頁首行 = 短純中文行且整份重複出現 ≥3 次，動態偵測不寫死
+    counts: dict[str, int] = {}
+    for line in lines:
+        t = line.strip().replace(" ", "")
+        if PURE_CJK_REGEX.match(t):
+            counts[t] = counts.get(t, 0) + 1
     out = []
-    for line in text.split("\n"):
+    for line in lines:
         t = line.strip()
         if not t:
             continue
+        compact = t.replace(" ", "")
         if FOOTER_REGEX.match(t):
             continue
-        if t in HEADER_NOISE or DATE_HEADER_REGEX.match(t):
+        if compact == SECTION_MARKER or DATE_HEADER_REGEX.match(compact):
+            continue
+        if PURE_CJK_REGEX.match(compact) and counts.get(compact, 0) >= 3:
             continue
         out.append(line)
     return "\n".join(out)
