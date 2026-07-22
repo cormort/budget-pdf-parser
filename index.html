@@ -667,9 +667,9 @@
                 </div>`;
 
             const rowsHtml = data.map(row => `<tr>
-                ${hasFund ? `<td>${escapeHtml(row.fund)}</td>` : ''}
+                ${hasFund ? `<td style="white-space:nowrap;">${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
-                ${hasBudget ? `<td>${escapeHtml(row.budget)}</td>` : ''}
+                ${hasBudget ? `<td style="white-space:nowrap;">${escapeHtml(row.budget)}</td>` : ''}
                 <td>${escapeHtml(row.l1Item)}</td>
                 <td>${escapeHtml(row.l2Item)}</td>
                 <td>${escapeHtml(row.l3Item)}</td>
@@ -678,7 +678,7 @@
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
-                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th style="min-width:280px;">計畫名稱</th>${hasBudget ? '<th>預算別</th>' : ''}<th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th style="min-width:360px;">編列說明</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+                `<table id="resultTable"><thead><tr>${hasFund ? '<th style="white-space:nowrap;">基金</th>' : ''}<th style="min-width:220px;">計畫名稱</th>${hasBudget ? '<th style="white-space:nowrap;">預算別</th>' : ''}<th style="min-width:5.5em;">一級科目</th><th style="min-width:7em;">二級科目</th><th style="min-width:7em;">三級科目</th><th style="white-space:nowrap;">金額</th><th style="min-width:320px;">編列說明</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
 
             // Cache filter DOM references
             ui.filterInput = document.getElementById('filterInput');
