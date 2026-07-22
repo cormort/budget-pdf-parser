@@ -850,12 +850,27 @@
             return { cols, rightCut };
         }
 
+        const _dashOnly = /^[-－–—]+$/;
+        function _matchAccountLoose(name) {
+            const exact = _matchAccount(name);
+            // 精確比對若把整個名稱吃乾淨（rest 無中文殘餘）就採用
+            if (exact && !_normalize(exact.rest)) return exact;
+            // 否則名稱可能是科目全名的開頭（PDF 換行截斷）→ 找以此名為前綴、能吃完整名的科目
+            const nn = _normalize(name);
+            if (nn.length >= 4) {
+                for (const item of _chart) {  // _chart 由長到短
+                    if (item.norm.startsWith(nn)) return { code: item.code, name: item.name, rest: '' };
+                }
+            }
+            return exact;  // 退回精確比對
+        }
+
         function _detailAssign(line, cols, rightCut) {
             const nameParts = []; const amounts = {};
             const entries = Object.entries(cols);
             for (const it of line) {
                 const t = it.str.trim();
-                if (!t) continue;
+                if (!t || _dashOnly.test(t)) continue;  // 空金額佔位「-」不計
                 if (_numRe.test(t.replace(/-/g, '')) && /\d/.test(t)) {
                     let best = null, bd = 1e9;
                     for (const [k, cx] of entries) { const d = Math.abs(cx - it.x); if (d < bd) { bd = d; best = k; } }
@@ -936,30 +951,32 @@
             for (const line of lines) {
                 const { name, amounts } = _detailAssign(line, cols, rightCut);
                 if (!name || ['業務計畫及用途別科目', '計畫內容說明', '基金用途'].includes(name)) continue;
-                let level;
+                const hasAmt = Object.keys(amounts).length > 0;
+                let level, displayName = name;
                 if (_planL1Regex.test(name)) { p1 = name.replace(_planL1Regex, '').trim(); p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
                 else if (_planL2Regex.test(name)) { p2 = name.replace(_planL2Regex, '').trim(); p3 = l1 = l2 = l3 = ''; level = '計畫'; }
                 else if (_planL3Regex.test(name)) { p3 = name.replace(_planL3Regex, '').trim(); l1 = l2 = l3 = ''; level = '計畫'; }
                 else {
-                    const m = _matchAccount(name);
-                    if (!m) {
-                        // 決算表計畫無壹/一標號：非科目又像計畫名(結尾計畫/基金) → 當計畫
-                        if (/(計畫|基金|支出)$/.test(name)) { p1 = name; p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
-                        else continue;
-                        out.push({ fund, level, plan: [p1, p2, p3].filter(Boolean).join(' - '), l1: '', l2: '', l3: '', name, amounts });
-                        continue;
+                    const m = _matchAccountLoose(name);
+                    if (m) {
+                        const clen = m.code.length;
+                        if (clen === 1) { l1 = m.name; l2 = l3 = ''; }
+                        else if (clen === 2) { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = m.name; l3 = ''; }
+                        else { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = _codeToName.get(m.code.substring(0, 2)) || l2; l3 = m.name; }
+                        level = '科目';
+                        displayName = m.name;  // 顯示科目表正式全名（修正 PDF 換行截斷）
+                    } else if (hasAmt && /(計畫|基金|支出)$/.test(name)) {
+                        // 決算表計畫無壹/一標號：有金額且像計畫名 → 當計畫
+                        p1 = name; p2 = p3 = l1 = l2 = l3 = ''; level = '計畫';
+                    } else {
+                        continue;  // 無金額又無法歸類 → 換行殘屑/小計，略過
                     }
-                    const clen = m.code.length;
-                    if (clen === 1) { l1 = m.name; l2 = l3 = ''; }
-                    else if (clen === 2) { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = m.name; l3 = ''; }
-                    else { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = _codeToName.get(m.code.substring(0, 2)) || l2; l3 = m.name; }
-                    level = '科目';
                 }
                 out.push({
                     fund, level,
                     plan: [p1, p2, p3].filter(Boolean).join(' - '),
                     l1: level === '科目' ? l1 : '', l2: level === '科目' ? l2 : '', l3: level === '科目' ? l3 : '',
-                    name, amounts,
+                    name: displayName, amounts,
                 });
             }
         }
