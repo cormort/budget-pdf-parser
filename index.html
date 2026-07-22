@@ -963,13 +963,12 @@
             return m ? `${m[0]}${m[1]}` : col;
         }
 
-        // 合併同單位來源：以年度標籤為欄、(基金|計畫|科目) 為鍵，第一來源順序為主
+        // 合併所有來源：統一單位為千元(決算元→÷1000四捨五入)、以年度標籤為欄、(基金|計畫|科目) 為鍵
         function buildMergedSources() {
-            const unit = _detailSources[0].unit;
-            const srcs = _detailSources.filter(s => s.unit === unit);
             const key = r => `${r.fund}|${r.plan}|${r.name}`;
+            const toThousand = (s, v) => (v == null ? null : (s.unit === '元' ? Math.round(v / 1000) : v));
             const amtCols = [], map = new Map(), order = [];
-            for (const s of srcs) {
+            for (const s of _detailSources) {
                 for (const r of s.rows) {
                     const k = key(r);
                     let row = map.get(k);
@@ -977,12 +976,12 @@
                     for (const [c, v] of Object.entries(r.amounts)) {
                         const yc = _yearCol(s.year, c);
                         if (!amtCols.includes(yc)) amtCols.push(yc);
-                        if (row.amounts[yc] == null) row.amounts[yc] = v;
+                        if (row.amounts[yc] == null) row.amounts[yc] = toThousand(s, v);
                     }
                 }
             }
             amtCols.sort();  // 年度標籤排序（113決算 < 114預算 < 114決算 < 115預算…）
-            return { rows: order.map(k => map.get(k)), amtCols, unit, count: srcs.length };
+            return { rows: order.map(k => map.get(k)), amtCols, unit: '千元', count: _detailSources.length };
         }
 
         function _parseDetailPage(lines, cols, rightCut, fund, out) {
@@ -1024,8 +1023,8 @@
             opts = opts || {};
             const cont = document.getElementById('tableContainerD');
             if (!amtCols) amtCols = Object.keys(data.find(r => Object.keys(r.amounts).length)?.amounts || {});
-            const sameUnitCount = _detailSources.filter(s => s.unit === _detailSources[0].unit).length;
-            const mergeToggle = (_detailSources.length > 1) ? `<label style="margin-left:12px;"><input type="checkbox" id="dMerge"${opts.merged ? ' checked' : ''}> 並排比較（合併 ${sameUnitCount} 個同單位來源，依年度對欄）</label>` : '';
+            const hasDecal = _detailSources.some(s => s.unit === '元');
+            const mergeToggle = (_detailSources.length > 1) ? `<label style="margin-left:12px;"><input type="checkbox" id="dMerge"${opts.merged ? ' checked' : ''}> 並排比較（合併 ${_detailSources.length} 個來源、依年度對欄${hasDecal ? '，決算元自動換算千元' : ''}）</label>` : '';
             const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource"${opts.merged ? ' disabled' : ''} style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === opts.idx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label>${mergeToggle}</div>` : '';
             const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
