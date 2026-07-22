@@ -574,6 +574,8 @@
                 rows.push({
                     fund: currentFund,
                     plan: [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean).join(' - ') || '未分類計畫',
+                    planTop: currentPlanL1 || '未分類計畫',
+                    planSub: [currentPlanL2, currentPlanL3].filter(Boolean).join(' - '),
                     budget: currentBudget,
                     l1Item: rowL1,
                     l2Item: rowL2,
@@ -649,7 +651,8 @@
             const filterHTML = `
                 <div class="filter-container" style="flex-wrap:wrap;">
                     ${hasFund ? selectHTML('filterFund', '基金', uniq('fund')) : ''}
-                    ${selectHTML('filterPlan', '計畫名稱', uniq('plan'))}
+                    ${selectHTML('filterPlanTop', '計畫', uniq('planTop'))}
+                    ${selectHTML('filterPlanSub', '子計畫', uniq('planSub'))}
                     ${hasBudget ? selectHTML('filterBudget', '預算別', uniq('budget')) : ''}
                     ${selectHTML('filterL1', '一級科目', uniq('l1Item'))}
                     ${selectHTML('filterL2', '二級科目', uniq('l2Item'))}
@@ -690,7 +693,7 @@
 
             const selectDefs = [
                 ...(hasFund ? [['filterFund', 'fund']] : []),
-                ['filterPlan', 'plan'],
+                ['filterPlanTop', 'planTop'], ['filterPlanSub', 'planSub'],
                 ...(hasBudget ? [['filterBudget', 'budget']] : []),
                 ['filterL1', 'l1Item'],
                 ['filterL2', 'l2Item'], ['filterL3', 'l3Item'],
