@@ -903,20 +903,28 @@
                     if (res.rows.length) { res.fileName = file.name; _detailSources.push(res); }
                 }
                 if (!_detailSources.length) { show('errorOutputD', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
-                showDetailSource(0);
-                show('statusMessageD', `完成：載入 ${_detailSources.length} 個來源，請於下方「來源」選擇要檢視的檔案。`);
+                _detailView = { merged: false, idx: 0 };
+                renderDetail();
+                show('statusMessageD', `完成：載入 ${_detailSources.length} 個來源。單一檢視用「來源」下拉；多本同單位可勾「並排比較」。`);
             } catch (e) { console.error(e); show('errorOutputD', '解析失敗：' + e.message); }
             finally { el('extractBtnD').disabled = false; }
         }
 
-        function showDetailSource(idx) {
-            const s = _detailSources[idx];
-            displayDetailTable(s.rows, s.amtCols, idx);
+        let _detailView = { merged: false, idx: 0 };
+        function showDetailSource(idx) { _detailView = { merged: false, idx }; renderDetail(); }
+        function renderDetail() {
+            if (_detailView.merged) {
+                const m = buildMergedSources();
+                displayDetailTable(m.rows, m.amtCols, { unit: m.unit, merged: true });
+            } else {
+                const s = _detailSources[_detailView.idx];
+                displayDetailTable(s.rows, s.amtCols, { unit: s.unit, idx: _detailView.idx });
+            }
         }
 
         async function parseDetailDoc(pdfDoc, onProgress) {
             const rows = [];
-            let label = '', fmt = null;
+            let label = '', fmt = null, year = null;
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 if (onProgress) onProgress(i, pdfDoc.numPages);
                 const page = await pdfDoc.getPage(i);
@@ -934,7 +942,8 @@
                 if (fmt === null) {  // 鎖定第一頁的格式，避免同一檔混到兩種版面
                     fmt = pageFmt;
                     const ym = head.join('').match(/中華民國([0-9]+)年度/);
-                    label = (ym ? ym[1] : '') + (fmt === 'decal' ? '決算' : '預算');
+                    year = ym ? parseInt(ym[1], 10) : null;
+                    label = (year || '') + (fmt === 'decal' ? '決算' : '預算');
                 } else if (pageFmt !== fmt) {
                     continue;
                 }
@@ -943,7 +952,37 @@
             const amtCols = [];
             for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
             const unit = fmt === 'decal' ? '元' : '千元';
-            return { label: label || '來源', rows, amtCols, unit };
+            return { label: label || '來源', rows, amtCols, unit, year, fmt };
+        }
+
+        // 把來源欄名換算成絕對年度標籤（供跨檔並排合併）
+        function _yearCol(year, col) {
+            if (year == null) return col;
+            const map = { '本年度預算': [year, '預算'], '上年度預算': [year - 1, '預算'], '前年度決算': [year - 2, '決算'], '預算數': [year, '預算'], '決算數': [year, '決算'] };
+            const m = map[col];
+            return m ? `${m[0]}${m[1]}` : col;
+        }
+
+        // 合併同單位來源：以年度標籤為欄、(基金|計畫|科目) 為鍵，第一來源順序為主
+        function buildMergedSources() {
+            const unit = _detailSources[0].unit;
+            const srcs = _detailSources.filter(s => s.unit === unit);
+            const key = r => `${r.fund}|${r.plan}|${r.name}`;
+            const amtCols = [], map = new Map(), order = [];
+            for (const s of srcs) {
+                for (const r of s.rows) {
+                    const k = key(r);
+                    let row = map.get(k);
+                    if (!row) { row = { fund: r.fund, plan: r.plan, level: r.level, name: r.name, amounts: {} }; map.set(k, row); order.push(k); }
+                    for (const [c, v] of Object.entries(r.amounts)) {
+                        const yc = _yearCol(s.year, c);
+                        if (!amtCols.includes(yc)) amtCols.push(yc);
+                        if (row.amounts[yc] == null) row.amounts[yc] = v;
+                    }
+                }
+            }
+            amtCols.sort();  // 年度標籤排序（113決算 < 114預算 < 114決算 < 115預算…）
+            return { rows: order.map(k => map.get(k)), amtCols, unit, count: srcs.length };
         }
 
         function _parseDetailPage(lines, cols, rightCut, fund, out) {
@@ -981,10 +1020,13 @@
             }
         }
 
-        function displayDetailTable(data, amtCols, srcIdx) {
+        function displayDetailTable(data, amtCols, opts) {
+            opts = opts || {};
             const cont = document.getElementById('tableContainerD');
             if (!amtCols) amtCols = Object.keys(data.find(r => Object.keys(r.amounts).length)?.amounts || {});
-            const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === srcIdx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label></div>` : '';
+            const sameUnitCount = _detailSources.filter(s => s.unit === _detailSources[0].unit).length;
+            const mergeToggle = (_detailSources.length > 1) ? `<label style="margin-left:12px;"><input type="checkbox" id="dMerge"${opts.merged ? ' checked' : ''}> 並排比較（合併 ${sameUnitCount} 個同單位來源，依年度對欄）</label>` : '';
+            const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource"${opts.merged ? ' disabled' : ''} style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === opts.idx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label>${mergeToggle}</div>` : '';
             const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
             const hasFund = data.some(r => r.fund);
@@ -996,7 +1038,7 @@
                 <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
-            const unit = (_detailSources[srcIdx] && _detailSources[srcIdx].unit) || '千元';
+            const unit = opts.unit || '千元';
             const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(${unit})</th>`).join('');
             const rowHtml = r => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
@@ -1005,6 +1047,7 @@
             cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map(rowHtml).join('')}</tbody></table>`;
             const el = id => document.getElementById(id);
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
+            if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
             const apply = () => {
                 const f = el('dFund') ? el('dFund').value : '', p = el('dPlan').value, lv = el('dLevel').value, kw = el('dKw').value.toLowerCase().trim();
