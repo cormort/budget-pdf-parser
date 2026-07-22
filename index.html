@@ -5,7 +5,7 @@
     <title>農業特別收入基金預算書pdf解析工具</title>
     <style>
         body { font-family: "Microsoft JhengHei", "微軟正黑體", Arial, sans-serif; margin: 20px; line-height: 1.6; background-color: #f8f9fa; color: #343a40; }
-        .container { max-width: 1400px; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        .container { max-width: 98vw; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
         h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
         p, .step-description { color: #6c757d; }
         .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
@@ -661,13 +661,12 @@
                 <td>${escapeHtml(row.l1Item)}</td>
                 <td>${escapeHtml(row.l2Item)}</td>
                 <td>${escapeHtml(row.l3Item)}</td>
-                <td style="text-align:right;">${row.amount ? row.amount.toLocaleString() : ""}</td>
-                <td style="white-space: pre-wrap;">${escapeHtml(row.description)}</td>
-                <td style="white-space: pre-wrap; color:#6c757d; font-size:12px;">${escapeHtml(row.raw || '')}</td>
+                <td style="text-align:right; white-space:nowrap;">${row.amount ? row.amount.toLocaleString() : ""}</td>
+                <td style="white-space: pre-wrap;">${escapeHtml(row.raw || '')}</td>
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
-                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th>計畫名稱</th>${hasBudget ? '<th>預算別</th>' : ''}<th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th style="min-width:280px;">計畫名稱</th>${hasBudget ? '<th>預算別</th>' : ''}<th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th style="min-width:360px;">編列說明</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
 
             // Cache filter DOM references
             ui.filterInput = document.getElementById('filterInput');
@@ -741,8 +740,8 @@
             document.getElementById('exportBtn').addEventListener('click', () => {
                 const visible = data.filter(rowVisible);
                 const aoa = [
-                    [...(hasFund ? ['基金'] : []), '計畫名稱', ...(hasBudget ? ['預算別'] : []), '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明', '原始行'],
-                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, ...(hasBudget ? [r.budget] : []), r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.description, r.raw || '']),
+                    [...(hasFund ? ['基金'] : []), '計畫名稱', ...(hasBudget ? ['預算別'] : []), '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明'],
+                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, ...(hasBudget ? [r.budget] : []), r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.raw || '']),
                 ];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '解析結果');
