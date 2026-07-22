@@ -840,12 +840,22 @@
                     if (t && !(t in pos)) pos[t] = it.x;
                 }
             }
-            const rightCut = pos['計畫內容說明'] ?? pos['備註'] ?? pos['備'] ?? 9999;
+            // 表頭 token 可能是完整詞、拆兩行、或逐字；用多形式尋找欄位錨點 x
+            const px = (...keys) => { for (const k of keys) if (k in pos) return pos[k]; return null; };
+            const O = 20;
+            const rightCut = px('計畫內容說明', '說', '備註', '備') ?? 9999;
+            const xF = px('前年度決算數', '前年度', '前');
+            const xB = px('本年度預算數', '本年度', '本');
+            const xU = px('上年度預算數', '上年度', '上');
             let cols = null;
-            if ('前年度' in pos) {
-                cols = { '前年度決算': pos['前年度'] + 20, '本年度預算': pos['本年度'] + 20, '上年度預算': pos['上年度'] + 20 };
-            } else if ('預' in pos && '決' in pos) {
-                cols = { '預算數': pos['預'] + 13, '決算數': pos['決'] + 13 };
+            if (xB != null || xU != null) {  // 預算書細表(3欄)：有本/上年度即判定，避免單字「決/預」誤觸發決算
+                cols = {};
+                if (xF != null) cols['前年度決算'] = xF + O;
+                if (xB != null) cols['本年度預算'] = xB + O;
+                if (xU != null) cols['上年度預算'] = xU + O;
+            } else {  // 決算表(2欄)：預算數、決算數
+                const xP = px('預算數', '預'), xD = px('決算數', '決');
+                if (xP != null && xD != null) cols = { '預算數': xP + O, '決算數': xD + O };
             }
             return { cols, rightCut };
         }
@@ -924,7 +934,7 @@
 
         async function parseDetailDoc(pdfDoc, onProgress) {
             const rows = [];
-            let label = '', fmt = null, year = null;
+            let label = '', fmt = null, year = null, curFund = null, st = null;
             for (let i = 1; i <= pdfDoc.numPages; i++) {
                 if (onProgress) onProgress(i, pdfDoc.numPages);
                 const page = await pdfDoc.getPage(i);
@@ -932,12 +942,16 @@
                 const lines = _detailLines(items);
                 const head = lines.slice(0, 6).map(l => l.map(it => it.str).join('').replace(/[\s　]/g, ''));
                 if (!head.some(h => h === _DETAIL_MARKER)) continue;
-                const pageText = lines.map(l => l.map(it => it.str).join('')).join('');
-                if (!['用人費用', '服務費用', '材料及用品費'].some(k => pageText.includes(k))) continue;
-                const mi = head.findIndex(h => h === _DETAIL_MARKER);
-                const fund = mi >= 1 ? head[mi - 1] : '';
                 const { cols, rightCut } = _detailColumns(lines);
                 if (!cols) continue;
+                const merged = _mergeWrapped(lines, cols, rightCut);
+                // 細表頁 = 含至少一個科目列（排除只有計畫的彙總頁）；不再靠特定科目關鍵字，避免漏基金/計畫
+                const hasSubject = merged.some(a => Object.keys(a.amounts).length > 0
+                    && !_planL1Regex.test(a.name) && !_planL2Regex.test(a.name) && !_planL3Regex.test(a.name)
+                    && _matchAccountLoose(a.name));
+                if (!hasSubject) continue;
+                const mi = head.findIndex(h => h === _DETAIL_MARKER);
+                const fund = mi >= 1 ? head[mi - 1] : '';
                 const pageFmt = '決算數' in cols ? 'decal' : 'budget';
                 if (fmt === null) {  // 鎖定第一頁的格式，避免同一檔混到兩種版面
                     fmt = pageFmt;
@@ -947,7 +961,8 @@
                 } else if (pageFmt !== fmt) {
                     continue;
                 }
-                _parseDetailPage(lines, cols, rightCut, fund, rows);
+                if (fund !== curFund) { st = { p1: '', p2: '', p3: '', l1: '', l2: '', l3: '' }; curFund = fund; }
+                _parseDetailItems(merged, fund, rows, st);  // 跨頁沿用同基金的計畫脈絡
             }
             const amtCols = [];
             for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
@@ -1000,35 +1015,34 @@
             return items;
         }
 
-        function _parseDetailPage(lines, cols, rightCut, fund, out) {
-            let p1 = '', p2 = '', p3 = '', l1 = '', l2 = '', l3 = '';
-            for (const { name, amounts } of _mergeWrapped(lines, cols, rightCut)) {
+        function _parseDetailItems(items, fund, out, st) {
+            for (const { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
                 const hasAmt = Object.keys(amounts).length > 0;
                 let level, displayName = name;
-                if (_planL1Regex.test(name)) { p1 = name.replace(_planL1Regex, '').trim(); p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
-                else if (_planL2Regex.test(name)) { p2 = name.replace(_planL2Regex, '').trim(); p3 = l1 = l2 = l3 = ''; level = '計畫'; }
-                else if (_planL3Regex.test(name)) { p3 = name.replace(_planL3Regex, '').trim(); l1 = l2 = l3 = ''; level = '計畫'; }
+                if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (_planL2Regex.test(name)) { st.p2 = name.replace(_planL2Regex, '').trim(); st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (_planL3Regex.test(name)) { st.p3 = name.replace(_planL3Regex, '').trim(); st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
                 else {
                     const m = _matchAccountLoose(name);
                     if (m) {
                         const clen = m.code.length;
-                        if (clen === 1) { l1 = m.name; l2 = l3 = ''; }
-                        else if (clen === 2) { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = m.name; l3 = ''; }
-                        else { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = _codeToName.get(m.code.substring(0, 2)) || l2; l3 = m.name; }
+                        if (clen === 1) { st.l1 = m.name; st.l2 = st.l3 = ''; }
+                        else if (clen === 2) { st.l1 = _codeToName.get(m.code.substring(0, 1)) || st.l1; st.l2 = m.name; st.l3 = ''; }
+                        else { st.l1 = _codeToName.get(m.code.substring(0, 1)) || st.l1; st.l2 = _codeToName.get(m.code.substring(0, 2)) || st.l2; st.l3 = m.name; }
                         level = '科目';
                         displayName = m.name;  // 顯示科目表正式全名（修正 PDF 換行截斷）
                     } else if (hasAmt && /(計畫|基金|支出)$/.test(name)) {
                         // 決算表計畫無壹/一標號：有金額且像計畫名 → 當計畫
-                        p1 = name; p2 = p3 = l1 = l2 = l3 = ''; level = '計畫';
+                        st.p1 = name; st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫';
                     } else {
                         continue;  // 無金額又無法歸類 → 換行殘屑/小計，略過
                     }
                 }
                 out.push({
                     fund, level,
-                    plan: [p1, p2, p3].filter(Boolean).join(' - '),
-                    l1: level === '科目' ? l1 : '', l2: level === '科目' ? l2 : '', l3: level === '科目' ? l3 : '',
+                    plan: [st.p1, st.p2, st.p3].filter(Boolean).join(' - '),
+                    l1: level === '科目' ? st.l1 : '', l2: level === '科目' ? st.l2 : '', l3: level === '科目' ? st.l3 : '',
                     name: displayName, amounts,
                 });
             }
