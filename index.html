@@ -98,7 +98,10 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
-        
+
+        // 基金分段標記行：提取時插在基金交界處，通過清理與斷行後仍保留，供轉表格時判定所屬基金
+        const FUND_MARK = '⟦基金⟧';
+
         // ----- DOM cache -----
         const ui = {
             fileInput: document.getElementById('fileInput'),
@@ -171,8 +174,24 @@
                     usedPages = selected.length ? selected : pageLinesList;
                     sectionNote = selected.length ? `（自動篩選出「${SECTION_MARKER}」章節 ${selected.length} / ${pdfDoc.numPages} 頁）` : '';
                 }
-                ui.outputArea.value = usedPages.map(lines => lines.join('\n')).join('\n').trim();
-                showMessage(ui.statusMessage, `提取完成！${sectionNote}您現在可以在下方的文字區進行編輯與清理。`);
+                // 每頁頁首「基金用途明細表說明」上一行即基金名稱；基金交界處插入標記行
+                const fundOfPage = lines => {
+                    const head = lines.slice(0, 6).map(l => l.replace(/[\s　]/g, ''));
+                    const i = head.indexOf(SECTION_MARKER);
+                    return (i >= 1 && head[i - 1]) ? head[i - 1] : '';
+                };
+                let prevFund = '';
+                const outParts = [];
+                for (const lines of usedPages) {
+                    const f = fundOfPage(lines) || prevFund;
+                    if (f && f !== prevFund) outParts.push(FUND_MARK + f);
+                    prevFund = f;
+                    outParts.push(lines.join('\n'));
+                }
+                ui.outputArea.value = outParts.join('\n').trim();
+                const funds = [...new Set([...ui.outputArea.value.matchAll(new RegExp('^' + FUND_MARK + '(.+)$', 'gm'))].map(m => m[1]))];
+                const fundNote = funds.length > 1 ? `（辨識出 ${funds.length} 個基金：${funds.join('、')}）` : (funds.length === 1 ? `（基金：${funds[0]}）` : '');
+                showMessage(ui.statusMessage, `提取完成！${sectionNote}${fundNote}您現在可以在下方的文字區進行編輯與清理。`);
                 ui.convertBtn.disabled = false;
             } catch (err) {
                 console.error("提取 PDF 時發生錯誤:", err);
@@ -206,9 +225,8 @@
             return out.join('');
         }
 
-        function breakLinesByHeadings() {
-            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
-            let singleLine = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+        function reflowBlock(block) {
+            let singleLine = block.replace(/\n/g, ' ').replace(/\s+/g, ' ');
             const headingRegex = new RegExp(
                 '(?<=^|\\s)(' +
                     '[壹貳參肆伍陸柒捌玖拾]、|' +
@@ -221,7 +239,24 @@
             singleLine = singleLine.replace(headingRegex, '\n$1');
             singleLine = singleLine.replace(/\n([壹貳參肆伍陸柒捌玖拾]、)/g, '\n\n$1');
             singleLine = splitAtPeriodOutsideParens(singleLine);
-            ui.outputArea.value = singleLine.trim();
+            return singleLine.trim();
+        }
+
+        function breakLinesByHeadings() {
+            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            // 基金標記行不參與 reflow：以它為界分段各自重新斷行，標記行原樣保留
+            const out = [];
+            let buf = [];
+            for (const line of text.split('\n')) {
+                if (line.startsWith(FUND_MARK)) {
+                    if (buf.length) { out.push(reflowBlock(buf.join('\n'))); buf = []; }
+                    out.push(line);
+                } else {
+                    buf.push(line);
+                }
+            }
+            if (buf.length) out.push(reflowBlock(buf.join('\n')));
+            ui.outputArea.value = out.filter(s => s !== '').join('\n');
             showMessage(ui.statusMessage, "已根據標號與句末「。」重新斷行 (v36)。");
         }
 
@@ -361,6 +396,7 @@
                 return;
             }
 
+            let currentFund = '';
             let currentPlanL1 = '', currentPlanL2 = '';
             let currentL1 = '', currentL2 = '', currentL3 = '';
             const rows = [];
@@ -370,6 +406,13 @@
 
             for (const raw of lines) {
                 const line = raw.trim();
+
+                if (line.startsWith(FUND_MARK)) {
+                    currentFund = line.substring(FUND_MARK.length).trim();
+                    currentPlanL1 = currentPlanL2 = '';
+                    currentL1 = currentL2 = currentL3 = '';
+                    continue;
+                }
 
                 if (_planL1Regex.test(line)) {
                     currentPlanL1 = line.replace(_planL1Regex, '').trim();
@@ -486,6 +529,7 @@
 
                 const amount = _extractAmount(line);
                 rows.push({
+                    fund: currentFund,
                     plan: [currentPlanL1, currentPlanL2].filter(Boolean).join(' - ') || '未分類計畫',
                     l1Item: rowL1,
                     l2Item: rowL2,
@@ -556,8 +600,10 @@
                     </select>
                 </label>`;
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
+            const hasFund = data.some(r => r.fund);
             const filterHTML = `
                 <div class="filter-container" style="flex-wrap:wrap;">
+                    ${hasFund ? selectHTML('filterFund', '基金', uniq('fund')) : ''}
                     ${selectHTML('filterPlan', '計畫名稱', uniq('plan'))}
                     ${selectHTML('filterL1', '一級科目', uniq('l1Item'))}
                     ${selectHTML('filterL2', '二級科目', uniq('l2Item'))}
@@ -572,6 +618,7 @@
                 </div>`;
 
             const rowsHtml = data.map(row => `<tr>
+                ${hasFund ? `<td>${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
                 <td>${escapeHtml(row.l1Item)}</td>
                 <td>${escapeHtml(row.l2Item)}</td>
@@ -582,7 +629,7 @@
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
-                `<table id="resultTable"><thead><tr><th>計畫名稱</th><th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+                `<table id="resultTable"><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th>計畫名稱</th><th>一級科目</th><th>二級科目</th><th>三級科目</th><th>金額</th><th>編列說明</th><th>原始行</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
 
             // Cache filter DOM references
             ui.filterInput = document.getElementById('filterInput');
@@ -596,6 +643,7 @@
             ui.filterCount.textContent = `包括 ${data.length} 列資料`;
 
             const selectDefs = [
+                ...(hasFund ? [['filterFund', 'fund']] : []),
                 ['filterPlan', 'plan'], ['filterL1', 'l1Item'],
                 ['filterL2', 'l2Item'], ['filterL3', 'l3Item'],
             ];
@@ -624,7 +672,7 @@
                 }
                 const keyword = ui.filterInput.value.toLowerCase().trim();
                 if (!keyword) return true;
-                return [r.plan, r.l1Item, r.l2Item, r.l3Item, String(r.amount), r.description, r.raw]
+                return [r.fund, r.plan, r.l1Item, r.l2Item, r.l3Item, String(r.amount), r.description, r.raw]
                     .join('\n').toLowerCase().includes(keyword);
             };
 
@@ -653,8 +701,8 @@
             document.getElementById('exportBtn').addEventListener('click', () => {
                 const visible = data.filter(rowVisible);
                 const aoa = [
-                    ['計畫名稱', '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明', '原始行'],
-                    ...visible.map(r => [r.plan, r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.description, r.raw || '']),
+                    [...(hasFund ? ['基金'] : []), '計畫名稱', '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明', '原始行'],
+                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.description, r.raw || '']),
                 ];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '解析結果');

@@ -1,7 +1,8 @@
-"""MCP server exposing the budget-PDF pipeline as two tools:
+"""MCP server exposing the budget-PDF pipeline:
 
   1. extract_and_clean : PDF -> cleaned text (頁碼/標題移除、依標號重新分段)
   2. build_table       : cleaned text -> structured rows (+ optional xlsx)
+  3. parse_pdf_by_fund : PDF -> 一步到位，每列標上所屬基金（多基金合輯自動切開）
 
 Register:
   claude mcp add budget-parser -- <venv-python> mcp_server.py
@@ -42,6 +43,33 @@ def build_table(cleaned_text: str, out_xlsx: str = "") -> dict:
     if out_xlsx:
         out = Path(out_xlsx).expanduser()
         pb.write_xlsx(rows, unmatched, out, cleaned_text)
+        result["xlsx"] = str(out)
+    return result
+
+
+@mcp.tool()
+def parse_pdf_by_fund(pdf_path: str, page_from: int = 0, page_to: int = 0, out_xlsx: str = "") -> dict:
+    """一步到位解析預算書 PDF：每列標上所屬基金（依頁首基金名稱把多基金合輯自動切開），
+    回傳各基金列數統計與資料列。page_from/page_to 留 0 則自動抓「基金用途明細表說明」章節頁；
+    傳入 out_xlsx 則同時輸出含「基金」欄的 xlsx。"""
+    p = Path(pdf_path).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(f"找不到 PDF：{p}")
+    rng = (page_from, page_to) if page_from >= 1 and page_to >= page_from else None
+    rows, unmatched, cleaned = pb.parse_pdf(p, page_range=rng)
+    fund_counts: dict[str, int] = {}
+    for r in rows:
+        fund_counts[r.get("fund", "")] = fund_counts.get(r.get("fund", ""), 0) + 1
+    result = {
+        "rows": rows,
+        "unmatched": unmatched,
+        "row_count": len(rows),
+        "unmatched_count": len(unmatched),
+        "fund_counts": fund_counts,
+    }
+    if out_xlsx:
+        out = Path(out_xlsx).expanduser()
+        pb.write_xlsx(rows, unmatched, out, cleaned)
         result["xlsx"] = str(out)
     return result
 

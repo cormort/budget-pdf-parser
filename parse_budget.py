@@ -425,48 +425,81 @@ SECTION_MARKER = "基金用途明細表說明"
 DATE_LINE_REGEX = re.compile(r"^中華民國\s*\d+\s*年度$")
 
 
+def _render_page(page, y_tolerance: float) -> str:
+    """Group words into lines by y-position (mirrors pdf.js y-sorted join)."""
+    words = sorted(page.extract_words(), key=lambda w: (w["top"], w["x0"]))
+    groups = []
+    for w in words:
+        if groups and abs(groups[-1]["y_ref"] - w["top"]) <= y_tolerance:
+            groups[-1]["words"].append(w)
+        else:
+            groups.append({"y_ref": w["top"], "words": [w]})
+    rendered = []
+    for grp in groups:
+        grp["words"].sort(key=lambda w: w["x0"])
+        rendered.append("".join(w["text"] for w in grp["words"]))
+    return "\n".join(rendered)
+
+
+def _fund_of_page(text: str, section: str) -> str | None:
+    """頁首「基金用途明細表說明」上一行即基金名稱；找不到回 None。"""
+    head = [ln.replace(" ", "") for ln in text.split("\n")[:6]]
+    if section in head:
+        idx = head.index(section)
+        if idx >= 1 and head[idx - 1]:
+            return head[idx - 1]
+    return None
+
+
+def extract_pdf_segments(
+    pdf_path: Path,
+    y_tolerance: float = 3.0,
+    section: str = SECTION_MARKER,
+    page_range: tuple[int, int] | None = None,
+) -> list[tuple[str, str]]:
+    """回傳 [(基金名稱, 頁面文字), ...]，依頁首基金名稱把連續頁分段。
+
+    - page_range 指定時只取該範圍；否則自動抓頁首含 section 標記的頁。
+    - 頁面沒有基金頁首（例如 page_range 選到的頁）時沿用前一頁的基金；
+      整份都無法判定時基金名為空字串。
+    """
+    with pdfplumber.open(pdf_path) as pdf:
+        page_texts = [p.extract_text() or "" for p in pdf.pages]
+
+        def _in_section(t: str) -> bool:
+            head = t.split("\n")[:6]
+            return any(ln.replace(" ", "") == section for ln in head)
+
+        if page_range:  # 使用者指定 (起頁, 迄頁)，1-based 含迄頁，優先於自動偵測
+            lo, hi = page_range
+            idxs = list(range(max(lo, 1) - 1, min(hi, len(pdf.pages))))
+        else:
+            idxs = [i for i, t in enumerate(page_texts) if _in_section(t)] if section else []
+            if not idxs:
+                idxs = list(range(len(pdf.pages)))
+
+        segments: list[tuple[str, list[str]]] = []
+        current_fund = ""
+        for i in idxs:
+            fund = _fund_of_page(page_texts[i], section) or current_fund
+            current_fund = fund
+            text = _render_page(pdf.pages[i], y_tolerance)
+            if segments and segments[-1][0] == fund:
+                segments[-1][1].append(text)
+            else:
+                segments.append((fund, [text]))
+    return [(fund, "\n".join(texts)) for fund, texts in segments]
+
+
 def extract_pdf_text(
     pdf_path: Path,
     y_tolerance: float = 3.0,
     section: str = SECTION_MARKER,
     page_range: tuple[int, int] | None = None,
 ) -> str:
-    """Extract text grouping words into lines by y-position with tolerance.
-
-    Without tolerance, numbers in tables (whose baselines drift by < 1 px from
-    surrounding text) end up on their own "line", e.g. `50,000` separated from
-    `推廣冬季裡作種植綠肥作物所需農業與園藝用品及環境美化費 千元。`.
-    """
-    with pdfplumber.open(pdf_path) as pdf:
-        pages = []
-        page_texts = [p.extract_text() or "" for p in pdf.pages]
-        # 只保留頁首含 section 標記的頁（整本預算書丟進來也只抓基金用途章節）；
-        # 沒有任何頁符合時退回全部頁面。
-        def _in_section(t: str) -> bool:
-            head = t.split("\n")[:6]
-            # 需整行等於標記（去空白後），避免誤抓目次頁的「基金用途明細表說明....60」
-            return any(ln.replace(" ", "") == section for ln in head)
-
-        if page_range:  # 使用者指定 (起頁, 迄頁)，1-based 含迄頁，優先於自動偵測
-            lo, hi = page_range
-            target_pages = pdf.pages[max(lo, 1) - 1 : hi]
-        else:
-            selected = [p for p, t in zip(pdf.pages, page_texts) if _in_section(t)] if section else []
-            target_pages = selected or list(pdf.pages)
-        for page in target_pages:
-            words = sorted(page.extract_words(), key=lambda w: (w["top"], w["x0"]))
-            groups = []
-            for w in words:
-                if groups and abs(groups[-1]["y_ref"] - w["top"]) <= y_tolerance:
-                    groups[-1]["words"].append(w)
-                else:
-                    groups.append({"y_ref": w["top"], "words": [w]})
-            rendered = []
-            for grp in groups:
-                grp["words"].sort(key=lambda w: w["x0"])
-                rendered.append("".join(w["text"] for w in grp["words"]))
-            pages.append("\n".join(rendered))
-    return "\n".join(pages)
+    """向後相容：只回傳文字（不含基金分段資訊）。"""
+    segs = extract_pdf_segments(pdf_path, y_tolerance, section, page_range)
+    return "\n".join(text for _, text in segs)
 
 
 # ----- Cleanup pipeline (mirror of the three JS buttons) -----
@@ -568,7 +601,7 @@ NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
 
 
-def parse(text: str):
+def parse(text: str, fund: str = ""):
     rows = []
     unmatched = []
     current_plan_l1 = ""
@@ -717,6 +750,7 @@ def parse(text: str):
 
         rows.append(
             {
+                "fund": fund,
                 "plan": plan,
                 "l1": row_l1,
                 "l2": row_l2,
@@ -730,6 +764,23 @@ def parse(text: str):
     return rows, unmatched
 
 
+def parse_pdf(
+    pdf_path: Path,
+    y_tolerance: float = 3.0,
+    section: str = SECTION_MARKER,
+    page_range: tuple[int, int] | None = None,
+):
+    """PDF → (rows, unmatched, cleaned_text)，每列標上所屬基金。"""
+    all_rows, all_unmatched, cleaned_parts = [], [], []
+    for fund_name, text in extract_pdf_segments(pdf_path, y_tolerance, section, page_range):
+        cleaned = auto_clean(text)
+        cleaned_parts.append(cleaned)
+        rows, unmatched = parse(cleaned, fund=fund_name)
+        all_rows.extend(rows)
+        all_unmatched.extend(unmatched)
+    return all_rows, all_unmatched, "\n".join(cleaned_parts)
+
+
 # ----- xlsx output -----
 
 def write_xlsx(rows, unmatched, out_path: Path, cleaned_text: str):
@@ -738,6 +789,7 @@ def write_xlsx(rows, unmatched, out_path: Path, cleaned_text: str):
     ws.title = "解析結果"
 
     headers = [
+        "基金",
         "計畫名稱",
         "一級科目",
         "二級科目",
@@ -755,18 +807,18 @@ def write_xlsx(rows, unmatched, out_path: Path, cleaned_text: str):
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     for r in rows:
-        ws.append([r["plan"], r["l1"], r["l2"], r["l3"], r["amount"] or "", r["description"], r["raw"]])
+        ws.append([r.get("fund", ""), r["plan"], r["l1"], r["l2"], r["l3"], r["amount"] or "", r["description"], r["raw"]])
 
-    widths = [24, 16, 20, 18, 16, 80, 80]
+    widths = [18, 24, 16, 20, 18, 16, 80, 80]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
     for row in range(2, ws.max_row + 1):
-        cell = ws.cell(row=row, column=5)
+        cell = ws.cell(row=row, column=6)
         cell.number_format = "#,##0;(#,##0);-"
         cell.alignment = Alignment(horizontal="right")
-        ws.cell(row=row, column=6).alignment = Alignment(wrap_text=True, vertical="top")
         ws.cell(row=row, column=7).alignment = Alignment(wrap_text=True, vertical="top")
+        ws.cell(row=row, column=8).alignment = Alignment(wrap_text=True, vertical="top")
 
     ws.freeze_panes = "A2"
 
@@ -827,13 +879,15 @@ def main():
         "農業基金用途明細114年度預算案_解析結果.xlsx"
     )
 
-    raw = extract_pdf_text(pdf_path)
-    cleaned = auto_clean(raw)
-    rows, unmatched = parse(cleaned)
+    rows, unmatched, cleaned = parse_pdf(pdf_path)
     write_xlsx(rows, unmatched, out_path, cleaned)
 
+    funds = {}
+    for r in rows:
+        funds[r.get("fund", "")] = funds.get(r.get("fund", ""), 0) + 1
     print(f"Wrote {out_path}")
     print(f"rows={len(rows)}  unmatched(prefix=none)={len(unmatched)}")
+    print("基金分布:", funds)
 
 
 if __name__ == "__main__":
