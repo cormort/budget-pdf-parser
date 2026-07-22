@@ -984,11 +984,26 @@
             return { rows: order.map(k => map.get(k)), amtCols, unit: '千元', count: _detailSources.length };
         }
 
+        const _HEAD_NAMES = ['業務計畫及用途別科目', '計畫內容說明', '基金用途', '前年度', '本年度', '上年度', '前年度決算數', '本年度預算數', '上年度預算數'];
+        function _mergeWrapped(lines, cols, rightCut) {
+            // 換行接續行(無金額、非計畫標號、非科目、非表頭)併回上一列名稱，修正長名被截斷
+            const items = [];
+            for (const line of lines) {
+                const a = _detailAssign(line, cols, rightCut);
+                if (!a.name) continue;
+                const isCont = Object.keys(a.amounts).length === 0
+                    && !_planL1Regex.test(a.name) && !_planL2Regex.test(a.name) && !_planL3Regex.test(a.name)
+                    && !_HEAD_NAMES.includes(a.name) && !_matchAccountLoose(a.name);
+                if (isCont && items.length) items[items.length - 1].name += a.name;
+                else items.push(a);
+            }
+            return items;
+        }
+
         function _parseDetailPage(lines, cols, rightCut, fund, out) {
             let p1 = '', p2 = '', p3 = '', l1 = '', l2 = '', l3 = '';
-            for (const line of lines) {
-                const { name, amounts } = _detailAssign(line, cols, rightCut);
-                if (!name || ['業務計畫及用途別科目', '計畫內容說明', '基金用途'].includes(name)) continue;
+            for (const { name, amounts } of _mergeWrapped(lines, cols, rightCut)) {
+                if (!name || _HEAD_NAMES.includes(name)) continue;
                 const hasAmt = Object.keys(amounts).length > 0;
                 let level, displayName = name;
                 if (_planL1Regex.test(name)) { p1 = name.replace(_planL1Regex, '').trim(); p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
