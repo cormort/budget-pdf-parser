@@ -38,12 +38,23 @@
         .filter-container label { font-weight: bold; color: #495057; }
         .filter-container button { padding: 8px 15px; }
         #filterCount { color: #0056b3; font-style: italic; }
+        .tab-bar { display: flex; gap: 4px; border-bottom: 2px solid #0056b3; margin-bottom: 20px; }
+        .tab-btn { padding: 12px 22px; background: #e9ecef; color: #495057; border: none; border-radius: 8px 8px 0 0; font-size: 15px; font-weight: bold; cursor: pointer; }
+        .tab-btn.active { background: #0056b3; color: #fff; }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>農業特別收入基金預算書pdf解析工具</h1>
-        
+
+        <div class="tab-bar">
+            <button class="tab-btn active" onclick="switchTab('narrative')">用途明細表說明（編列說明）</button>
+            <button class="tab-btn" onclick="switchTab('detail')">用途明細表（本年度/上年度預算・前年度決算）</button>
+        </div>
+
+        <div id="tab-narrative" class="tab-pane active">
         <div class="step">
             <h2>步驟一：提取 PDF 文字</h2>
             <div class="controls">
@@ -92,6 +103,23 @@
         <div id="tableContainer">
             <p>最終表格將會顯示於此處。</p>
         </div>
+        </div><!-- /tab-narrative -->
+
+        <div id="tab-detail" class="tab-pane">
+            <div class="step">
+                <h2>數字用途明細表比較</h2>
+                <p class="step-description">上傳「基金用途明細表」（數字版，非說明）PDF——預算書細表含 前年度決算數、本年度預算數、上年度預算數；解析結果依表格計畫＋科目順序呈現。</p>
+                <div class="controls">
+                    <label for="fileInputD" class="file-label">選擇 PDF 檔案</label>
+                    <input type="file" id="fileInputD" accept=".pdf">
+                    <span id="fileNameDisplayD">尚未選擇檔案</span>
+                    <button id="extractBtnD" class="btn-main" onclick="parseDetailPdf()">解析數字表</button>
+                </div>
+            </div>
+            <div id="statusMessageD" class="message status-message"></div>
+            <div id="errorOutputD" class="message error-message"></div>
+            <div id="tableContainerD"><p>數字比較表將顯示於此處。</p></div>
+        </div><!-- /tab-detail -->
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
@@ -758,6 +786,197 @@
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '解析結果');
                 XLSX.writeFile(wb, '預算書解析結果.xlsx');
+            });
+        }
+
+        // ===== 分頁 =====
+        function switchTab(name) {
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('tab-' + name).classList.add('active');
+            if (window.event && window.event.target) window.event.target.classList.add('active');
+        }
+
+        // ===== 數字用途明細表解析（本年度/上年度預算・前年度決算） =====
+        const _DETAIL_MARKER = '基金用途明細表';
+        const _numRe = /^[\d,]+$/;
+        document.getElementById('fileInputD').addEventListener('change', () => {
+            const f = document.getElementById('fileInputD').files;
+            document.getElementById('fileNameDisplayD').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
+        });
+
+        function _expandItem(it) {
+            // pdf.js 常把相鄰數字合併成一個含空格的 item；依 width 依字元比例拆回子 token
+            const s = it.str;
+            const x = it.transform[4], w = it.width || 0;
+            if (!/\S\s+\S/.test(s)) return [{ x, str: s }];
+            const out = [];
+            const re = /\S+/g; let m;
+            while ((m = re.exec(s)) !== null) {
+                out.push({ x: x + (s.length ? (m.index / s.length) * w : 0), str: m[0] });
+            }
+            return out;
+        }
+
+        function _detailLines(items) {
+            // 依 y 分行；每行 [{x,str}] 依 x 排序
+            const Y_TOL = 3;
+            const sorted = items.flatMap(it => _expandItem(it).map(sub => ({ x: sub.x, y: it.transform[5], str: sub.str })))
+                .sort((a, b) => b.y - a.y);
+            const groups = [];
+            for (const s of sorted) {
+                const g = groups.length ? groups[groups.length - 1] : null;
+                if (g && Math.abs(g.y - s.y) <= Y_TOL) g.items.push(s);
+                else groups.push({ y: s.y, items: [s] });
+            }
+            return groups.map(g => g.items.sort((a, b) => a.x - b.x));
+        }
+
+        function _detailColumns(lines) {
+            const pos = {};
+            for (const line of lines.slice(0, 14)) {
+                for (const it of line) {
+                    const t = it.str.trim();
+                    if (t && !(t in pos)) pos[t] = it.x;
+                }
+            }
+            const rightCut = pos['計畫內容說明'] ?? pos['備註'] ?? pos['備'] ?? 9999;
+            let cols = null;
+            if ('前年度' in pos) {
+                cols = { '前年度決算': pos['前年度'] + 20, '本年度預算': pos['本年度'] + 20, '上年度預算': pos['上年度'] + 20 };
+            } else if ('預' in pos && '決' in pos) {
+                cols = { '預算數': pos['預'] + 13, '決算數': pos['決'] + 13 };
+            }
+            return { cols, rightCut };
+        }
+
+        function _detailAssign(line, cols, rightCut) {
+            const nameParts = []; const amounts = {};
+            const entries = Object.entries(cols);
+            for (const it of line) {
+                const t = it.str.trim();
+                if (!t) continue;
+                if (_numRe.test(t.replace(/-/g, '')) && /\d/.test(t)) {
+                    let best = null, bd = 1e9;
+                    for (const [k, cx] of entries) { const d = Math.abs(cx - it.x); if (d < bd) { bd = d; best = k; } }
+                    if (best && bd <= 45 && !(best in amounts)) {
+                        const n = parseInt(t.replace(/,/g, ''), 10);
+                        amounts[best] = isNaN(n) ? null : n;
+                    }
+                } else if (it.x < rightCut - 8) {
+                    nameParts.push([it.x, t]);
+                }
+            }
+            nameParts.sort((a, b) => a[0] - b[0]);
+            return { name: nameParts.map(p => p[1]).join(''), amounts };
+        }
+
+        async function parseDetailPdf() {
+            const el = id => document.getElementById(id);
+            const show = (n, t) => { el('statusMessageD').style.display = 'none'; el('errorOutputD').style.display = 'none'; el(n).textContent = t; el(n).style.display = 'block'; };
+            const fi = el('fileInputD');
+            if (!fi.files || !fi.files.length) { show('errorOutputD', '請先選擇 PDF。'); return; }
+            el('extractBtnD').disabled = true;
+            try {
+                const buf = new Uint8Array(await fi.files[0].arrayBuffer());
+                const rows = await parseDetailDoc(await pdfjsLib.getDocument({ data: buf }).promise,
+                    (i, n) => show('statusMessageD', `解析第 ${i}/${n} 頁...`));
+                if (!rows.length) { show('errorOutputD', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
+                displayDetailTable(rows);
+                show('statusMessageD', `完成，共 ${rows.length} 列。`);
+            } catch (e) { console.error(e); show('errorOutputD', '解析失敗：' + e.message); }
+            finally { el('extractBtnD').disabled = false; }
+        }
+
+        async function parseDetailDoc(pdfDoc, onProgress) {
+            const rows = [];
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                if (onProgress) onProgress(i, pdfDoc.numPages);
+                const page = await pdfDoc.getPage(i);
+                const items = (await page.getTextContent()).items;
+                const lines = _detailLines(items);
+                const head = lines.slice(0, 6).map(l => l.map(it => it.str).join('').replace(/[\s　]/g, ''));
+                if (!head.some(h => h === _DETAIL_MARKER)) continue;
+                const pageText = lines.map(l => l.map(it => it.str).join('')).join('');
+                if (!['用人費用', '服務費用', '材料及用品費'].some(k => pageText.includes(k))) continue;
+                const mi = head.findIndex(h => h === _DETAIL_MARKER);
+                const fund = mi >= 1 ? head[mi - 1] : '';
+                const { cols, rightCut } = _detailColumns(lines);
+                if (!cols) continue;
+                _parseDetailPage(lines, cols, rightCut, fund, rows);
+            }
+            return rows;
+        }
+
+        function _parseDetailPage(lines, cols, rightCut, fund, out) {
+            let p1 = '', p2 = '', p3 = '', l1 = '', l2 = '', l3 = '';
+            for (const line of lines) {
+                const { name, amounts } = _detailAssign(line, cols, rightCut);
+                if (!name || ['業務計畫及用途別科目', '計畫內容說明', '基金用途'].includes(name)) continue;
+                let level;
+                if (_planL1Regex.test(name)) { p1 = name.replace(_planL1Regex, '').trim(); p2 = p3 = l1 = l2 = l3 = ''; level = '計畫'; }
+                else if (_planL2Regex.test(name)) { p2 = name.replace(_planL2Regex, '').trim(); p3 = l1 = l2 = l3 = ''; level = '計畫'; }
+                else if (_planL3Regex.test(name)) { p3 = name.replace(_planL3Regex, '').trim(); l1 = l2 = l3 = ''; level = '計畫'; }
+                else {
+                    const m = _matchAccount(name);
+                    if (!m) continue;
+                    const clen = m.code.length;
+                    if (clen === 1) { l1 = m.name; l2 = l3 = ''; }
+                    else if (clen === 2) { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = m.name; l3 = ''; }
+                    else { l1 = _codeToName.get(m.code.substring(0, 1)) || l1; l2 = _codeToName.get(m.code.substring(0, 2)) || l2; l3 = m.name; }
+                    level = '科目';
+                }
+                out.push({
+                    fund, level,
+                    plan: [p1, p2, p3].filter(Boolean).join(' - '),
+                    l1: level === '科目' ? l1 : '', l2: level === '科目' ? l2 : '', l3: level === '科目' ? l3 : '',
+                    name, amounts,
+                });
+            }
+        }
+
+        function displayDetailTable(data) {
+            const cont = document.getElementById('tableContainerD');
+            const amtCols = Object.keys(data.find(r => Object.keys(r.amounts).length)?.amounts || {});
+            const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
+            const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
+            const hasFund = data.some(r => r.fund);
+            const selHTML = (id, label, vals) => `<label>${label}: <select id="${id}" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:220px;"><option value="">全部</option>${vals.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}</select></label>`;
+            const filterHTML = `<div class="filter-container" style="flex-wrap:wrap;">
+                ${hasFund ? selHTML('dFund', '基金', uniq('fund')) : ''}
+                ${selHTML('dPlan', '計畫', uniq('plan'))}
+                <label>層級: <select id="dLevel" style="padding:8px;border:1px solid #ccc;border-radius:4px;"><option value="">全部</option><option value="計畫">計畫</option><option value="科目">科目</option></select></label>
+                <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
+                <button id="dExport" class="btn-success">匯出 xlsx</button>
+                <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
+            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(千元)</th>`).join('');
+            const rowHtml = r => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
+                <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
+                <td style="${r.level === '計畫' ? 'font-weight:bold;' : 'padding-left:24px;'}">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.name)}</td>
+                ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}</tr>`;
+            cont.innerHTML = filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map(rowHtml).join('')}</tbody></table>`;
+            const el = id => document.getElementById(id);
+            const rows = el('dTable').tBodies[0].rows;
+            const apply = () => {
+                const f = el('dFund') ? el('dFund').value : '', p = el('dPlan').value, lv = el('dLevel').value, kw = el('dKw').value.toLowerCase().trim();
+                let vis = 0;
+                for (let i = 0; i < rows.length; i++) {
+                    const r = rows[i]; const d = data[i];
+                    let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv);
+                    if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
+                    r.style.display = ok ? '' : 'none'; if (ok) vis++;
+                }
+                el('dCount').textContent = `顯示 ${vis} / ${data.length} 列`;
+            };
+            ['dFund', 'dPlan', 'dLevel'].forEach(id => el(id) && el(id).addEventListener('change', apply));
+            el('dKw').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
+            apply();
+            el('dExport').addEventListener('click', () => {
+                const aoa = [['基金', '層級', '計畫', '科目', ...amtCols.map(c => c + '(千元)')]];
+                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? '')]); }
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '用途明細表比較');
+                XLSX.writeFile(wb, '用途明細表比較.xlsx');
             });
         }
     </script>
