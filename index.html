@@ -873,9 +873,9 @@
             let cols = null;
             if (xB != null || xU != null) {  // 預算書細表(3欄)：有本/上年度即判定，避免單字「決/預」誤觸發決算
                 cols = {};
-                if (xF != null) cols['前年度決算'] = xF + O;
                 if (xB != null) cols['本年度預算'] = xB + O;
                 if (xU != null) cols['上年度預算'] = xU + O;
+                if (xF != null) cols['前年度決算'] = xF + O;
             } else {  // 決算表(2欄)：預算數、決算數
                 const xP = px('預算數', '預'), xD = px('決算數', '決');
                 if (xP != null && xD != null) cols = { '預算數': xP + O, '決算數': xD + O };
