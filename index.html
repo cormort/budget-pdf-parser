@@ -995,8 +995,10 @@
                 const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
                 // 彙總到 基金|一級|二級
                 const nMap = new Map(), dMap = new Map(), meta = new Map();
+                // 小計標題行(其金額＝底下明細之和)必須排除，否則與明細重複加總
+                const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
                 for (const r of nrows) {
-                    if (!r.amount || !r.l2Item || r.description.includes('包括')) continue;
+                    if (!r.amount || !r.l2Item || _SUBTOTAL.test(r.description)) continue;
                     const plan = r.planTop || '';
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
                     nMap.set(k, (nMap.get(k) || 0) + r.amount);
