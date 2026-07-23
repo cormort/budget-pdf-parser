@@ -665,7 +665,10 @@ def parse(text: str, fund: str = ""):
 
         # 沒有「編列」、又帶算式符號（= + [] %）的行 → 貸款餘額/利息計算說明，
         # 併回上一列說明，不當新科目也不抓金額
-        if rows and "編列" not in line and CALC_NOTE_REGEX.search(line):
+        if rows and "編列" not in line and CALC_NOTE_REGEX.search(line) and not match_account(
+            PAREN_PREFIX_LINE_REGEX.sub("", NUMBER_PREFIX_REGEX.sub("", line))
+        ):
+            # 句首若是可比對到的科目(如「1.擴充改良房屋建築及設備…〈計算式x3%〉」)則不吞，讓它獨立成列
             prev = rows[-1]
             prev["description"] += "\n" + line
             prev["raw"] += "\n" + line
