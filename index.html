@@ -1142,15 +1142,21 @@
                 ${selHTML('dL3', '三級科目', uniq('l3'))}
                 ${comparisons.length ? `<label>比較增減: <select id="dDiffType" style="padding:8px;border:1px solid #ccc;border-radius:4px;"><option value="">全部</option>${comparisons.map(c => `<optgroup label="${escapeHtml(c.label)}">${comparisonOptions.map(o => `<option value="${c.key}_${o.key}">${escapeHtml(o.label)}</option>`).join('')}</optgroup>`).join('')}</select></label>` : ''}
                 <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
+                <button id="dClear" class="btn-secondary">清除條件</button>
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
             const unit = opts.unit || '千元';
             const el = id => document.getElementById(id);
             const th = `<th style="min-width:160px;">基金</th><th style="min-width:240px;">計畫 / 科目</th>` + amtCols.map(c => `<th>${escapeHtml(c)}<br><span style="font-weight:normal;font-size:11px;opacity:.75">(${unit})</span></th>`).join('') + comparisons.map(c => `<th>${escapeHtml(c.label)}<br><span style="font-weight:normal;font-size:11px;opacity:.75">(${unit})</span></th>`).join('');
             const rowLevel = r => { if (r.level === '計畫') return 'd-plan'; if (r.l3 && r.name === r.l3) return 'd-l3'; if (r.l2 && r.name === r.l2) return 'd-l2'; return 'd-l1'; };
+            const nameCell = r => {
+                if (r.level === '計畫') return r.plan.split(' - ').slice(-1)[0] || r.name;
+                const hasL = (el('dL1') && el('dL1').value) || (el('dL2') && el('dL2').value) || (el('dL3') && el('dL3').value);
+                return hasL ? r.plan : r.name;
+            };
             const rowHtml = (r, i) => { const cls = rowLevel(r); return `<tr class="${cls}" data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td class="d-name">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.plan)}</td>
+                <td class="d-name">${escapeHtml(nameCell(r))}</td>
                 ${amtCols.map(c => `<td class="d-amt">${fmt(r.amounts[c])}</td>`).join('')}
                 ${comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(diffs[i][c.key])}</td>`).join('')}</tr>`; };
             cont.innerHTML = srcHTML + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
@@ -1240,6 +1246,13 @@
             }));
             if (el('dDiffType')) el('dDiffType').addEventListener('change', apply);
             el('dKw').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
+            el('dClear').addEventListener('click', () => {
+                selects.forEach(([sel]) => { sel.value = ''; });
+                refreshOptions(0);
+                if (el('dDiffType')) el('dDiffType').value = '';
+                el('dKw').value = '';
+                apply();
+            });
             apply();
             el('dExport').addEventListener('click', () => {
                 const diffHeaders = comparisons.map(c => c.label + '(千元)');
