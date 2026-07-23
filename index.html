@@ -991,7 +991,7 @@
                 } else if (pageFmt !== fmt) {
                     continue;
                 }
-                if (fund !== curFund) { st = { p1: '', p2: '', p3: '', l1: '', l2: '', l3: '' }; curFund = fund; }
+                if (fund !== curFund) { st = { subFund: '', p1: '', p2: '', p3: '', l1: '', l2: '', l3: '' }; curFund = fund; }
                 _parseDetailItems(merged, fund, rows, st, pageFmt === 'decal');  // 跨頁沿用同基金的計畫脈絡
             }
             const amtCols = [];
@@ -1049,8 +1049,15 @@
             for (const { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
                 if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
-                if (fund && name.replace(/[\s　]/g, '') === fund) continue;  // 基金合計行（基金名本身），略過
+                const cleanN = name.replace(/[\s　]/g, '');
+                if (fund && cleanN === fund) continue;  // 母基金合計行，略過
                 const hasAmt = Object.keys(amounts).length > 0;
+                // 偵測分基金切換（決算表中分基金合計行：結尾「基金」、有金額、非母基金）
+                if (hasAmt && /基金$/.test(cleanN) && cleanN !== fund) {
+                    st.subFund = cleanN;
+                    st.p1 = st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = '';
+                    continue;  // 分基金合計行本身不輸出
+                }
                 let level, displayName = name;
                 // 計畫標號偵測（預算書/決算書皆適用）
                 if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
@@ -1064,17 +1071,17 @@
                         else if (clen === 2) { st.l1 = _codeToName.get(m.code.substring(0, 1)) || st.l1; st.l2 = m.name; st.l3 = ''; }
                         else { st.l1 = _codeToName.get(m.code.substring(0, 1)) || st.l1; st.l2 = _codeToName.get(m.code.substring(0, 2)) || st.l2; st.l3 = m.name; }
                         level = '科目';
-                        displayName = m.name;  // 顯示科目表正式全名（修正 PDF 換行截斷）
-                    } else if (hasAmt && /(計畫|基金|支出)$/.test(name)) {
+                        displayName = m.name;
+                    } else if (hasAmt && /(計畫|支出)$/.test(name)) {
                         // 有金額且像計畫名 → 當計畫；去除可能殘留的標號前綴
-                        const cleanName = name.replace(_planL1Regex, '').replace(_planL2Regex, '').trim();
-                        st.p1 = cleanName || name; st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫';
+                        const cn = name.replace(_planL1Regex, '').replace(_planL2Regex, '').trim();
+                        st.p1 = cn || name; st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫';
                     } else {
-                        continue;  // 無金額又無法歸類 → 換行殘屑/小計，略過
+                        continue;
                     }
                 }
                 out.push({
-                    fund, level,
+                    fund: st.subFund || fund, level,
                     plan: [st.p1, st.p2, st.p3].filter(Boolean).join(' - '),
                     l1: level === '科目' ? st.l1 : '', l2: level === '科目' ? st.l2 : '', l3: level === '科目' ? st.l3 : '',
                     name: displayName, amounts,
