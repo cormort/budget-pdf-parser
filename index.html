@@ -995,14 +995,20 @@
                 const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
                 // 彙總到 基金|一級|二級
                 const nMap = new Map(), dMap = new Map(), meta = new Map();
-                // 小計標題行(其金額＝底下明細之和)必須排除，否則與明細重複加總
+                // 說明版二級金額：優先採用原文寫明的二級合計(如「－捐助、補助與獎助－編列15,241千元」)，
+                // 沒寫合計的基金才退回加總三級明細。兩者不混用，從根本避免小計與明細重複相加。
                 const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
+                const hdrMap = new Map(), leafMap = new Map();
                 for (const r of nrows) {
-                    if (!r.amount || !r.l2Item || _SUBTOTAL.test(r.description)) continue;
+                    if (!r.amount || !r.l2Item) continue;
                     const plan = r.planTop || '';
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
-                    nMap.set(k, (nMap.get(k) || 0) + r.amount);
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
+                    if (r.confirmed && !r.l3Item) hdrMap.set(k, (hdrMap.get(k) || 0) + r.amount);       // 原文合計
+                    else if (r.l3Item && !_SUBTOTAL.test(r.description)) leafMap.set(k, (leafMap.get(k) || 0) + r.amount);
+                }
+                for (const k of new Set([...hdrMap.keys(), ...leafMap.keys()])) {
+                    nMap.set(k, hdrMap.get(k) || leafMap.get(k) || 0);
                 }
                 for (const r of dres.rows) {
                     const amt = r.amounts['本年度預算'];
