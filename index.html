@@ -406,16 +406,25 @@
         });
         _chart.sort((a, b) => b.norm.length - a.norm.length);
 
+        const _stripPrefix = (str) => {
+            if (!str) return '';
+            return str.replace(/^\s*(?:[\(（][\d一二三四五六七八九十A-Za-z]+[\)）]|\d+[\.、]?|[一二三四五六七八九十]+[\.、]?|[A-Za-z][\.、])\s*/, '');
+        };
+
         const _matchAccount = (line, predicate) => {
-            const normLine = _normalize(line);
-            for (const item of _chart) {
-                if (predicate && !predicate(item)) continue;
-                if (!item.norm) continue;
-                if (!normLine.startsWith(item.norm)) continue;
-                const rest = _walkMatch(line, item.norm);
-                if (rest !== null) return { code: item.code, name: item.name, rest };
-            }
-            return null;
+            const cleanLine = _stripPrefix(line);
+            const tryMatch = (l) => {
+                const normLine = _normalize(l);
+                for (const item of _chart) {
+                    if (predicate && !predicate(item)) continue;
+                    if (!item.norm) continue;
+                    if (!normLine.startsWith(item.norm)) continue;
+                    const rest = _walkMatch(l, item.norm);
+                    if (rest !== null) return { code: item.code, name: item.name, rest };
+                }
+                return null;
+            };
+            return tryMatch(line) || tryMatch(cleanLine);
         };
 
         const _amountPatterns = [
@@ -892,17 +901,37 @@
 
         const _dashOnly = /^[-－–—]+$/;
         function _matchAccountLoose(name) {
-            const exact = _matchAccount(name);
-            // 精確比對若把整個名稱吃乾淨（rest 無中文殘餘）就採用
+            if (!name) return null;
+            const clean = _stripPrefix(name.trim());
+            const exact = _matchAccount(clean) || _matchAccount(name);
             if (exact && !_normalize(exact.rest)) return exact;
-            // 否則名稱可能是科目全名的開頭（PDF 換行截斷）→ 找以此名為前綴、能吃完整名的科目
-            const nn = _normalize(name);
-            if (nn.length >= 4) {
-                for (const item of _chart) {  // _chart 由長到短
-                    if (item.norm.startsWith(nn)) return { code: item.code, name: item.name, rest: '' };
+
+            const nn = _normalize(clean || name);
+            if (nn.length >= 2) {
+                // Alias checks for accounts that often appear with agency-specific variations
+                if (nn.includes('外包')) {
+                    const item = _chart.find(it => it.code === '279');
+                    if (item) return { code: item.code, name: item.name, rest: '' };
+                }
+                if (nn.includes('按日按件') || nn.includes('計時與計件')) {
+                    const item = _chart.find(it => it.code === '27D');
+                    if (item) return { code: item.code, name: item.name, rest: '' };
+                }
+                if (nn.includes('媒體宣導') || nn.includes('政策宣導') || nn.includes('業務宣導')) {
+                    const item = _chart.find(it => it.code === '2A1' || it.code === '245');
+                    if (item) return { code: item.code, name: item.name, rest: '' };
+                }
+
+                for (const item of _chart) {
+                    if (item.norm.length >= 3 && (nn.includes(item.norm) || item.norm.includes(nn))) {
+                        return { code: item.code, name: item.name, rest: '' };
+                    }
+                    if (item.norm.startsWith(nn) || nn.startsWith(item.norm)) {
+                        return { code: item.code, name: item.name, rest: '' };
+                    }
                 }
             }
-            return exact;  // 退回精確比對
+            return exact;
         }
 
         function _detailAssign(line, cols, rightCut) {
