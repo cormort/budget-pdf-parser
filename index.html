@@ -29,6 +29,27 @@
         th { background-color: #e9ecef; color: #495057; font-weight: bold; }
         tbody tr:nth-child(even) { background-color: #f2f6fa; }
         tbody tr:hover { background-color: #e8f0fe; }
+        .diff-pos { color: #1a7f37; font-weight: 600; }
+        .diff-neg { color: #cf222e; font-weight: 600; }
+        .diff-zero { color: #8b949e; }
+        .diff-pos::before { content: '▲ '; font-size: 0.75em; }
+        .diff-neg::before { content: '▼ '; font-size: 0.75em; }
+        /* ── Detail table (#dTable) ── */
+        .d-table-wrap { max-height: 72vh; overflow: auto; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 10px; }
+        #dTable { border-collapse: separate; border-spacing: 0; width: 100%; }
+        #dTable thead th { position: sticky; top: 0; z-index: 2; background: linear-gradient(180deg, #1e3a5f, #17304d); color: #fff; padding: 10px 12px; border: 1px solid #2d5a8a; font-size: 13px; text-shadow: 0 1px 1px rgba(0,0,0,.2); }
+        #dTable tbody td { padding: 7px 10px; border-bottom: 1px solid #e8ecf0; border-right: 1px solid #e8ecf0; }
+        #dTable tbody td:first-child { border-left: 1px solid #e8ecf0; }
+        #dTable tbody tr { background: #fff; }
+        #dTable tbody tr:nth-child(even):not(.d-plan) { background: #f7f9fb; }
+        #dTable tbody tr:hover { background: #dbeafe !important; }
+        #dTable .d-plan { background: #eef3f9 !important; }
+        #dTable .d-plan td { font-weight: 600; border-top: 2px solid #b8cce0; }
+        #dTable .d-plan .d-name { color: #1a365d; padding-left: 4px; }
+        #dTable .d-l1 .d-name { padding-left: 12px; font-weight: 600; }
+        #dTable .d-l2 .d-name { padding-left: 28px; }
+        #dTable .d-l3 .d-name { padding-left: 44px; color: #64748b; font-size: 13px; }
+        #dTable .d-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; letter-spacing: -.3px; }
         .message { border-left: 4px solid; padding: 10px 15px; margin: 15px 0; border-radius: 4px; display: none; }
         .status-message { color: #004085; background-color: #cce5ff; border-color: #b8daff; }
         .error-message { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
@@ -1068,6 +1089,8 @@
             const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource"${opts.merged ? ' disabled' : ''} style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === opts.idx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label>${mergeToggle}</div>` : '';
             const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
             const fmtDiff = v => (v === null || v === undefined) ? '' : (v > 0 ? '+' : '') + v.toLocaleString();
+            const diffClass = v => (v === null || v === undefined) ? '' : (v > 0 ? 'diff-pos' : (v < 0 ? 'diff-neg' : 'diff-zero'));
+            const fmtDiffHtml = v => (v === null || v === undefined) ? '' : `<span class="${diffClass(v)}">${fmtDiff(v)}</span>`;
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
             const hasFund = data.some(r => r.fund);
             const selHTML = (id, label, vals) => `<label>${label}: <select id="${id}" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:220px;"><option value="">全部</option>${vals.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}</select></label>`;
@@ -1113,13 +1136,14 @@
             const showDiff = () => el('dShowDiff') && el('dShowDiff').checked;
             const activeDiffCol = () => el('dDiffCol') ? el('dDiffCol').value : (comparisons.length ? comparisons[0].key : '');
             const diffColLabel = (key) => { const c = comparisons.find(x => x.key === key); return c ? c.label : key; };
-            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(${unit})</th>`).join('') + (comparisons.length ? `<th style="white-space:nowrap;display:${showDiff() ? '' : 'none'};" class="dDiffCell">增減(${unit})</th>` : '');
-            const rowHtml = (r, i) => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
+            const th = `<th style="min-width:160px;">基金</th><th style="min-width:240px;">計畫 / 科目</th>` + amtCols.map(c => `<th>${escapeHtml(c)}<br><span style="font-weight:normal;font-size:11px;opacity:.75">(${unit})</span></th>`).join('') + (comparisons.length ? `<th class="dDiffCell" style="display:${showDiff() ? '' : 'none'};">比較增減<br><span style="font-weight:normal;font-size:11px;opacity:.75">(${unit})</span></th>` : '');
+            const rowLevel = r => { if (r.level === '計畫') return 'd-plan'; if (r.l3 && r.name === r.l3) return 'd-l3'; if (r.l2 && r.name === r.l2) return 'd-l2'; return 'd-l1'; };
+            const rowHtml = (r, i) => { const cls = rowLevel(r); return `<tr class="${cls}" data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td style="${r.level === '計畫' ? 'font-weight:bold;' : 'padding-left:24px;'}">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.name)}</td>
-                ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}
-                ${comparisons.length ? `<td style="text-align:right;white-space:nowrap;display:${showDiff() ? '' : 'none'};" class="dDiffCell">${fmtDiff(diffs[i][activeDiffCol()])}</td>` : ''}</tr>`;
-            cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table>`;
+                <td class="d-name">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.name)}</td>
+                ${amtCols.map(c => `<td class="d-amt">${fmt(r.amounts[c])}</td>`).join('')}
+                ${comparisons.length ? `<td class="d-amt dDiffCell" style="display:${showDiff() ? '' : 'none'};">${fmtDiffHtml(diffs[i][activeDiffCol()])}</td>` : ''}</tr>`; };
+            cont.innerHTML = srcHTML + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
@@ -1190,7 +1214,7 @@
                     const dk = activeDiffCol();
                     for (let i = 0; i < rows.length; i++) {
                         const diffTd = rows[i].querySelector('.dDiffCell');
-                        if (diffTd) diffTd.textContent = fmtDiff(diffs[i][dk]);
+                        if (diffTd) diffTd.innerHTML = fmtDiffHtml(diffs[i][dk]);
                     }
                 }
             };
