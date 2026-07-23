@@ -1072,6 +1072,9 @@
                 ${hasFund ? selHTML('dFund', '基金', uniq('fund')) : ''}
                 ${selHTML('dPlan', '計畫', uniq('plan'))}
                 <label>層級: <select id="dLevel" style="padding:8px;border:1px solid #ccc;border-radius:4px;"><option value="">全部</option><option value="計畫">計畫</option><option value="科目">科目</option></select></label>
+                ${selHTML('dL1', '一級科目', uniq('l1'))}
+                ${selHTML('dL2', '二級科目', uniq('l2'))}
+                ${selHTML('dL3', '三級科目', uniq('l3'))}
                 <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
@@ -1086,23 +1089,61 @@
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
+
+            // Cascading dropdown definitions: parent → child hierarchy
+            const selectDefs = [
+                ...(hasFund ? [['dFund', 'fund']] : []),
+                ['dPlan', 'plan'],
+                ['dLevel', 'level'],
+                ['dL1', 'l1'], ['dL2', 'l2'], ['dL3', 'l3'],
+            ];
+            const selects = selectDefs.map(([id, key]) => [el(id), key]).filter(([s]) => s);
+
+            // 科目有隸屬關係：下層選單只列出符合上層選擇的資料列中出現過的值
+            const refreshOptions = (fromLevel) => {
+                for (let lvl = fromLevel; lvl < selects.length; lvl++) {
+                    const [sel, key] = selects[lvl];
+                    const prevValue = sel.value;
+                    let subset = data;
+                    for (let up = 0; up < lvl; up++) {
+                        const [upSel, upKey] = selects[up];
+                        if (upSel.value) subset = subset.filter(r => r[upKey] === upSel.value);
+                    }
+                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort();
+                    sel.innerHTML = `<option value="">全部</option>` +
+                        values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+                    sel.value = values.includes(prevValue) ? prevValue : '';
+                }
+            };
+
             const apply = () => {
-                const f = el('dFund') ? el('dFund').value : '', p = el('dPlan').value, lv = el('dLevel').value, kw = el('dKw').value.toLowerCase().trim();
+                const f = el('dFund') ? el('dFund').value : '';
+                const p = el('dPlan').value;
+                const lv = el('dLevel').value;
+                const l1 = el('dL1') ? el('dL1').value : '';
+                const l2 = el('dL2') ? el('dL2').value : '';
+                const l3 = el('dL3') ? el('dL3').value : '';
+                const kw = el('dKw').value.toLowerCase().trim();
                 let vis = 0;
                 for (let i = 0; i < rows.length; i++) {
-                    const r = rows[i]; const d = data[i];
-                    let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv);
+                    const d = data[i];
+                    let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv)
+                        && (!l1 || d.l1 === l1) && (!l2 || d.l2 === l2) && (!l3 || d.l3 === l3);
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
-                    r.style.display = ok ? '' : 'none'; if (ok) vis++;
+                    rows[i].style.display = ok ? '' : 'none'; if (ok) vis++;
                 }
                 el('dCount').textContent = `顯示 ${vis} / ${data.length} 列`;
             };
-            ['dFund', 'dPlan', 'dLevel'].forEach(id => el(id) && el(id).addEventListener('change', apply));
+
+            selects.forEach(([sel], lvl) => sel.addEventListener('change', () => {
+                refreshOptions(lvl + 1);
+                apply();
+            }));
             el('dKw').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
             apply();
             el('dExport').addEventListener('click', () => {
-                const aoa = [['基金', '層級', '計畫', '科目', ...amtCols.map(c => c + '(千元)')]];
-                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? '')]); }
+                const aoa = [['基金', '層級', '計畫', '一級科目', '二級科目', '三級科目', '科目名', ...amtCols.map(c => c + '(千元)')]];
+                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? '')]); }
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '用途明細表比較');
                 XLSX.writeFile(wb, '用途明細表比較.xlsx');
