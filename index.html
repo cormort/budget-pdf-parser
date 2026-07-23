@@ -935,7 +935,7 @@
                 displayDetailTable(m.rows, m.amtCols, { unit: m.unit, merged: true });
             } else {
                 const s = _detailSources[_detailView.idx];
-                displayDetailTable(s.rows, s.amtCols, { unit: s.unit, idx: _detailView.idx });
+                displayDetailTable(s.rows, s.amtCols, { unit: s.unit, idx: _detailView.idx, year: s.year });
             }
         }
 
@@ -1065,9 +1065,34 @@
             const mergeToggle = (_detailSources.length > 1) ? `<label style="margin-left:12px;"><input type="checkbox" id="dMerge"${opts.merged ? ' checked' : ''}> 並排比較（合併 ${_detailSources.length} 個來源、依年度對欄${hasDecal ? '，決算元自動換算千元' : ''}）</label>` : '';
             const srcHTML = (_detailSources.length > 1) ? `<div class="filter-container"><label>來源: <select id="dSource"${opts.merged ? ' disabled' : ''} style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:320px;">${_detailSources.map((s, i) => `<option value="${i}"${i === opts.idx ? ' selected' : ''}>${escapeHtml(s.label)}（${escapeHtml(s.fileName || '')}・${s.rows.length}列）</option>`).join('')}</select></label>${mergeToggle}</div>` : '';
             const fmt = v => (v === null || v === undefined) ? '' : v.toLocaleString();
+            const fmtDiff = v => (v === null || v === undefined) ? '' : (v > 0 ? '+' : '') + v.toLocaleString();
             const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
             const hasFund = data.some(r => r.fund);
             const selHTML = (id, label, vals) => `<label>${label}: <select id="${id}" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:220px;"><option value="">全部</option>${vals.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}</select></label>`;
+
+            // Detect comparison columns: 本年度預算 vs 上年度預算 / 前年度決算
+            const year = opts.year;
+            const _matchCol = (col, patterns) => patterns.some(p => col.includes(p));
+            const curBudget = amtCols.find(c => _matchCol(c, ['本年度預算', year != null ? year + '預算' : '__none__']));
+            const prevBudget = amtCols.find(c => _matchCol(c, ['上年度預算', year != null ? (year - 1) + '預算' : '__none__']));
+            const prevDecal = amtCols.find(c => _matchCol(c, ['前年度決算', year != null ? (year - 2) + '決算' : '__none__']));
+            const comparisons = [];
+            if (curBudget && prevBudget) comparisons.push({ key: 'curVsPrevBudget', label: `本年度預算 − 上年度預算`, a: curBudget, b: prevBudget });
+            if (curBudget && prevDecal) comparisons.push({ key: 'curVsPrevDecal', label: `本年度預算 − 前年度決算`, a: curBudget, b: prevDecal });
+            // Calculate diff values for each row
+            const diffs = data.map(r => {
+                const d = {};
+                for (const c of comparisons) d[c.key] = (r.amounts[c.a] ?? null) != null && (r.amounts[c.b] ?? null) != null ? r.amounts[c.a] - r.amounts[c.b] : null;
+                return d;
+            });
+            const comparisonOptions = [
+                { key: 'inc', label: '增加（差異 > 0）' },
+                { key: 'dec', label: '減少（差異 < 0）' },
+                { key: 'eq', label: '無增減（差異 = 0）' },
+                { key: 'inc10', label: '增加 ≥ 10%' },
+                { key: 'dec10', label: '減少 ≥ 10%' },
+            ];
+
             const filterHTML = `<div class="filter-container" style="flex-wrap:wrap;">
                 ${hasFund ? selHTML('dFund', '基金', uniq('fund')) : ''}
                 ${selHTML('dPlan', '計畫', uniq('plan'))}
@@ -1075,16 +1100,23 @@
                 ${selHTML('dL1', '一級科目', uniq('l1'))}
                 ${selHTML('dL2', '二級科目', uniq('l2'))}
                 ${selHTML('dL3', '三級科目', uniq('l3'))}
+                ${comparisons.length ? `<label>比較增減: <select id="dDiffType" style="padding:8px;border:1px solid #ccc;border-radius:4px;"><option value="">全部</option>${comparisons.map(c => `<optgroup label="${escapeHtml(c.label)}">${comparisonOptions.map(o => `<option value="${c.key}_${o.key}">${escapeHtml(o.label)}</option>`).join('')}</optgroup>`).join('')}</select></label>
+                ${comparisons.length ? `<label><input type="checkbox" id="dShowDiff"> 顯示增減欄</label>` : ''}
+                ${comparisons.length ? selHTML('dDiffCol', '增減基準', comparisons.map(c => c.label)) : ''}` : ''}
                 <input type="text" id="dKw" placeholder="關鍵字篩選..." style="padding:8px;border:1px solid #ccc;border-radius:4px;">
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
             const unit = opts.unit || '千元';
-            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(${unit})</th>`).join('');
-            const rowHtml = r => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
+            const showDiff = () => el('dShowDiff') && el('dShowDiff').checked;
+            const activeDiffCol = () => el('dDiffCol') ? el('dDiffCol').value : (comparisons.length ? comparisons[0].key : '');
+            const diffColLabel = (key) => { const c = comparisons.find(x => x.key === key); return c ? c.label : key; };
+            const th = `<th style="min-width:180px;">基金</th><th style="min-width:260px;">計畫/科目</th>` + amtCols.map(c => `<th style="white-space:nowrap;">${c}(${unit})</th>`).join('') + (comparisons.length ? `<th style="white-space:nowrap;display:${showDiff() ? '' : 'none'};" class="dDiffCell">增減(${unit})</th>` : '');
+            const rowHtml = (r, i) => `<tr data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td style="${r.level === '計畫' ? 'font-weight:bold;' : 'padding-left:24px;'}">${escapeHtml(r.level === '計畫' ? (r.plan.split(' - ').slice(-1)[0] || r.name) : r.name)}</td>
-                ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}</tr>`;
-            cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map(rowHtml).join('')}</tbody></table>`;
+                ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}
+                ${comparisons.length ? `<td style="text-align:right;white-space:nowrap;display:${showDiff() ? '' : 'none'};" class="dDiffCell">${fmtDiff(diffs[i][activeDiffCol()])}</td>` : ''}</tr>`;
+            cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table>`;
             const el = id => document.getElementById(id);
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
@@ -1123,27 +1155,57 @@
                 const l1 = el('dL1') ? el('dL1').value : '';
                 const l2 = el('dL2') ? el('dL2').value : '';
                 const l3 = el('dL3') ? el('dL3').value : '';
+                const diffVal = el('dDiffType') ? el('dDiffType').value : '';
                 const kw = el('dKw').value.toLowerCase().trim();
                 let vis = 0;
                 for (let i = 0; i < rows.length; i++) {
                     const d = data[i];
                     let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv)
                         && (!l1 || d.l1 === l1) && (!l2 || d.l2 === l2) && (!l3 || d.l3 === l3);
+                    if (ok && diffVal) {
+                        const [compKey, cmp] = diffVal.split('_');
+                        const diff = diffs[i][compKey];
+                        const base = d.amounts[comparisons.find(c => c.key === compKey)?.b];
+                        if (diff == null) ok = false;
+                        else if (cmp === 'inc') ok = diff > 0;
+                        else if (cmp === 'dec') ok = diff < 0;
+                        else if (cmp === 'eq') ok = diff === 0;
+                        else if (cmp === 'inc10') ok = base ? diff / base >= 0.1 : false;
+                        else if (cmp === 'dec10') ok = base ? diff / base <= -0.1 : false;
+                    }
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
                     rows[i].style.display = ok ? '' : 'none'; if (ok) vis++;
                 }
                 el('dCount').textContent = `顯示 ${vis} / ${data.length} 列`;
             };
 
+            // Toggle diff columns visibility
+            const refreshDiffDisplay = () => {
+                const show = showDiff();
+                document.querySelectorAll('.dDiffCell').forEach(td => td.style.display = show ? '' : 'none');
+                // Rebuild diff column content for active diffCol
+                if (show) {
+                    const dk = activeDiffCol();
+                    for (let i = 0; i < rows.length; i++) {
+                        const diffTd = rows[i].querySelector('.dDiffCell');
+                        if (diffTd) diffTd.textContent = fmtDiff(diffs[i][dk]);
+                    }
+                }
+            };
+
             selects.forEach(([sel], lvl) => sel.addEventListener('change', () => {
                 refreshOptions(lvl + 1);
                 apply();
             }));
+            if (el('dDiffType')) el('dDiffType').addEventListener('change', apply);
+            if (el('dDiffCol')) el('dDiffCol').addEventListener('change', () => { refreshDiffDisplay(); apply(); });
+            if (el('dShowDiff')) el('dShowDiff').addEventListener('change', () => { refreshDiffDisplay(); });
             el('dKw').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
             apply();
             el('dExport').addEventListener('click', () => {
-                const aoa = [['基金', '層級', '計畫', '一級科目', '二級科目', '三級科目', '科目名', ...amtCols.map(c => c + '(千元)')]];
-                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? '')]); }
+                const diffHeaders = comparisons.map(c => c.label + '(千元)');
+                const aoa = [['基金', '層級', '計畫', '一級科目', '二級科目', '三級科目', '科目名', ...amtCols.map(c => c + '(千元)'), ...diffHeaders]];
+                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? ''), ...comparisons.map(c => diffs[i][c.key] ?? '')]); }
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '用途明細表比較');
                 XLSX.writeFile(wb, '用途明細表比較.xlsx');
