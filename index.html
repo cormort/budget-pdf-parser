@@ -997,18 +997,23 @@
                 const nMap = new Map(), dMap = new Map(), meta = new Map();
                 // 說明版二級金額：優先採用原文寫明的二級合計(如「－捐助、補助與獎助－編列15,241千元」)，
                 // 沒寫合計的基金才退回加總三級明細。兩者不混用，從根本避免小計與明細重複相加。
+                // 以「區塊」為單位：同一二級科目可能有多個區塊，有的寫了合計、有的只列三級明細。
+                // 寫了合計的區塊 → 採合計、跳過其明細(否則重複)；沒寫合計的區塊 → 加總其明細(否則漏算)。
                 const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
-                const hdrMap = new Map(), leafMap = new Map();
+                let curKey = null, blockHasHeader = false;
                 for (const r of nrows) {
-                    if (!r.amount || !r.l2Item) continue;
+                    if (!r.l2Item) { curKey = null; blockHasHeader = false; continue; }
                     const plan = r.planTop || '';
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
+                    if (k !== curKey) { curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
-                    if (r.confirmed && !r.l3Item) hdrMap.set(k, (hdrMap.get(k) || 0) + r.amount);       // 原文合計
-                    else if (r.l3Item && !_SUBTOTAL.test(r.description)) leafMap.set(k, (leafMap.get(k) || 0) + r.amount);
-                }
-                for (const k of new Set([...hdrMap.keys(), ...leafMap.keys()])) {
-                    nMap.set(k, hdrMap.get(k) || leafMap.get(k) || 0);
+                    if (!r.amount) continue;
+                    if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
+                        nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                        blockHasHeader = true;
+                    } else if (r.l3Item && !blockHasHeader && !_SUBTOTAL.test(r.description)) {
+                        nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
+                    }
                 }
                 for (const r of dres.rows) {
                     const amt = r.amounts['本年度預算'];
