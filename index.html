@@ -1254,7 +1254,7 @@
                 // Hide all original rows
                 for (let i = 0; i < tbody.rows.length; i++) tbody.rows[i].style.display = 'none';
                 // Determine if we should aggregate by plan (L1 only, no L2/L3)
-                const aggByPlan = l1 && !l2 && !l3;
+                const aggByPlan = (l1 && !l2 && !l3) || (l2 && !l3);
                 let sumAmt = {}, sumDiff = {};
                 if (aggByPlan) {
                     // Aggregate: group matching rows by (fund, plan)
