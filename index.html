@@ -77,6 +77,7 @@
         <div class="tab-bar">
             <button class="tab-btn active" onclick="switchTab('narrative')">用途明細表說明（編列說明）</button>
             <button class="tab-btn" onclick="switchTab('detail')">用途明細表（本年度/上年度預算・前年度決算）</button>
+            <button class="tab-btn" onclick="switchTab('reconcile')">金額一致性對帳（提醒）</button>
         </div>
 
         <div id="tab-narrative" class="tab-pane active">
@@ -144,6 +145,22 @@
             <div id="errorOutputD" class="message error-message"></div>
             <div id="tableContainerD"><p>數字比較表將顯示於此處。</p></div>
         </div><!-- /tab-detail -->
+
+        <div id="tab-reconcile" class="tab-pane">
+            <div class="step">
+                <h2>金額一致性對帳（提醒工具）</h2>
+                <p class="step-description">上傳<strong>同一份</strong>預算書 PDF（同時含「編列說明」與「用途明細表」兩節）。系統以兩節各自解析出的金額，於「基金＋一級＋二級科目」層級比對，列出<strong>兩節金額不一致</strong>或<strong>僅一節出現</strong>的科目，提醒您人工複核。此為提醒非稽核：兩節粒度不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常。</p>
+                <div class="controls">
+                    <label for="fileInputR" class="file-label">選擇 PDF 檔案</label>
+                    <input type="file" id="fileInputR" accept=".pdf">
+                    <span id="fileNameDisplayR">尚未選擇檔案</span>
+                    <button id="extractBtnR" class="btn-main" onclick="runReconcile()">解析並對帳</button>
+                </div>
+            </div>
+            <div id="statusMessageR" class="message status-message"></div>
+            <div id="errorOutputR" class="message error-message"></div>
+            <div id="tableContainerR"><p>對帳結果將顯示於此處。</p></div>
+        </div><!-- /tab-reconcile -->
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
@@ -473,7 +490,18 @@
                 showMessage(ui.errorOutput, '文字區沒有內容，無法轉換。');
                 return;
             }
+            const { rows, unmatchedLines } = parseNarrativeText(text);
+            if (rows.length > 0) {
+                displayTable(rows, unmatchedLines);
+                const extra = unmatchedLines.length ? `，未匹配科目行 ${unmatchedLines.length} 筆` : '';
+                showMessage(ui.statusMessage, `成功解析 ${rows.length} 筆${extra}。`);
+            } else {
+                showMessage(ui.errorOutput, '無法從文字中解析出資料列。');
+            }
+        }
 
+        // 純解析：清理後文字 → {rows, unmatchedLines}，供轉表與第三個對帳 tab 共用
+        function parseNarrativeText(text) {
             let currentFund = '';
             let currentPlanL1 = '', currentPlanL2 = '', currentPlanL3 = '', currentBudget = '';
             let currentL1 = '', currentL2 = '', currentL3 = '', currentCode = '';
@@ -724,14 +752,7 @@
             for (const r of rows) {
                 r.description = r.description.split('\n').map(ln => ln.replace(/[ \t　]+/g, '')).join('\n');
             }
-
-            if (rows.length > 0) {
-                displayTable(rows, unmatchedLines);
-                const extra = unmatchedLines.length ? `，未匹配科目行 ${unmatchedLines.length} 筆` : '';
-                showMessage(ui.statusMessage, `成功解析 ${rows.length} 筆${extra}。`);
-            } else {
-                showMessage(ui.errorOutput, '無法從文字中解析出資料列。');
-            }
+            return { rows, unmatchedLines };
         }
         
         function escapeHtml(s) {
@@ -915,6 +936,121 @@
             const f = document.getElementById('fileInputD').files;
             document.getElementById('fileNameDisplayD').textContent = (f && f.length) ? `已選擇 ${f.length} 檔：${[...f].map(x => x.name).join('、')}` : '尚未選擇檔案';
         });
+        document.getElementById('fileInputR').addEventListener('change', () => {
+            const f = document.getElementById('fileInputR').files;
+            document.getElementById('fileNameDisplayR').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
+        });
+
+        // ===== 第三個 tab：金額一致性對帳 =====
+        // 純抽取「編列說明」章節文字(含 FUND_MARK)，與 extractPdfText 同法(自動抓章節、不含頁碼範圍)
+        async function _extractNarrativeText(pdfDoc) {
+            const SECTION_MARKER = '基金用途明細表說明', Y = 3;
+            const pageLinesList = [];
+            for (let i = 1; i <= pdfDoc.numPages; i++) {
+                const items = (await (await pdfDoc.getPage(i)).getTextContent()).items;
+                const sorted = items.map(it => ({ y: it.transform[5], x: it.transform[4], str: it.str })).sort((a, b) => b.y - a.y);
+                const groups = [];
+                for (const s of sorted) {
+                    if (groups.length && Math.abs(groups[groups.length - 1].yRef - s.y) <= Y) groups[groups.length - 1].items.push(s);
+                    else groups.push({ yRef: s.y, items: [s] });
+                }
+                pageLinesList.push(groups.map(g => { g.items.sort((a, b) => a.x - b.x); return g.items.map(it => it.str).join(''); }));
+            }
+            const inSection = ls => ls.slice(0, 6).some(ln => ln.replace(/[\s　]/g, '') === SECTION_MARKER);
+            const selected = pageLinesList.filter(inSection);
+            const used = selected.length ? selected : pageLinesList;
+            const fundOf = ls => { const h = ls.slice(0, 6).map(l => l.replace(/[\s　]/g, '')); const i = h.indexOf(SECTION_MARKER); return (i >= 1 && h[i - 1]) ? h[i - 1] : ''; };
+            let prev = ''; const out = [];
+            for (const ls of used) { const f = fundOf(ls) || prev; if (f && f !== prev) out.push(FUND_MARK + f); prev = f; out.push(ls.join('\n')); }
+            return out.join('\n').trim();
+        }
+
+        // 一鍵清理(純字串)：暫借文字區跑既有清理函式後還原，避免重寫邏輯
+        function _autoCleanText(text) {
+            const saved = ui.outputArea.value;
+            ui.outputArea.value = text;
+            stripPageNumbers(); breakLinesByHeadings(); breaklineBeforeParenthesis(); cleanInternalWhitespace();
+            const result = ui.outputArea.value;
+            ui.outputArea.value = saved;
+            return result;
+        }
+
+        const _akey = s => (s || '').replace(/[\s　、（）()－\-]/g, '');   // 科目名對帳用正規化
+
+        async function runReconcile() {
+            const el = id => document.getElementById(id);
+            const show = (n, t) => { el('statusMessageR').style.display = 'none'; el('errorOutputR').style.display = 'none'; el(n).textContent = t; el(n).style.display = 'block'; };
+            const fi = el('fileInputR');
+            if (!fi.files || !fi.files.length) { show('errorOutputR', '請先選擇 PDF。'); return; }
+            el('extractBtnR').disabled = true;
+            try {
+                show('statusMessageR', '解析中...');
+                const buf = new Uint8Array(await fi.files[0].arrayBuffer());
+                const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+                // 說明版
+                const text = _autoCleanText(await _extractNarrativeText(doc));
+                const nrows = parseNarrativeText(text).rows;
+                // 明細版
+                const dres = await parseDetailDoc(doc);
+                const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
+                // 彙總到 基金|一級|二級
+                const nMap = new Map(), dMap = new Map(), meta = new Map();
+                for (const r of nrows) {
+                    if (!r.amount || !r.l2Item || r.description.includes('包括')) continue;
+                    const plan = r.planTop || '';
+                    const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
+                    nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                    if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
+                }
+                for (const r of dres.rows) {
+                    const amt = r.amounts['本年度預算'];
+                    if (!amt || !r.l2 || r.l3) continue;
+                    const plan = (r.plan || '').split(' - ')[0];
+                    const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
+                    dMap.set(k, (dMap.get(k) || 0) + amt * factor);
+                    if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
+                }
+                const keys = new Set([...nMap.keys(), ...dMap.keys()]);
+                const diff = [], onlyOne = [], ok = [];
+                for (const k of keys) {
+                    const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
+                    const row = { ...meta.get(k), n, d };
+                    if (n != null && d != null) (n === d ? ok : diff).push({ ...row, delta: n - d });
+                    else onlyOne.push(row);
+                }
+                _renderReconcile(diff, onlyOne, ok);
+                show('statusMessageR', `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。請優先核對「金額不一致」。`);
+            } catch (e) { console.error(e); show('errorOutputR', '對帳失敗：' + e.message); }
+            finally { el('extractBtnR').disabled = false; }
+        }
+
+        function _renderReconcile(diff, onlyOne, ok) {
+            const fmt = v => v == null ? '—' : v.toLocaleString();
+            const cont = document.getElementById('tableContainerR');
+            diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+            onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
+            const rowH = (r, showDelta) => `<tr>
+                <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
+                <td>${escapeHtml(r.plan)}</td>
+                <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
+                <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
+                <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
+                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + r.delta.toLocaleString()}</td>` : '<td></td>'}
+             </tr>`;
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>說明版金額</th><th>明細版金額</th><th>差額(說明−明細)</th></tr></thead>';
+            const section = (title, note, list, showDelta) => list.length ? `
+                <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
+                <p class="step-description" style="margin:0 0 8px;">${note}</p>
+                <table class="recon-table">${head}<tbody>${list.map(r => rowH(r, showDelta)).join('')}</tbody></table>` : '';
+            const onlyH = onlyOne.length ? `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#b8860b;">🟡 僅一節出現（${onlyOne.length}）— 多為計畫階層命名不一致或粒度差異，優先度低</summary>
+                 <p class="step-description" style="margin:6px 0;">只有一節有此科目。「僅明細版有」多為正常(說明未描述)；「僅說明版有」較需留意。計畫層級比對時此類偏多，屬命名對不齊的雜訊。</p>
+                 <table class="recon-table">${head}<tbody>${onlyOne.map(r => rowH(r, false)).join('')}</tbody></table></details>` : '';
+            cont.innerHTML =
+                section('🔴 金額不一致', '兩節皆有此(計畫＋二級科目)、但金額不同——最需優先人工核對(可能是分類差異或漏抓)。', diff, true) +
+                onlyH +
+                `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#28a745;">✅ 金額相符（${ok.length}）</summary>
+                 <table class="recon-table">${head}<tbody>${ok.map(r => rowH(r, false)).join('')}</tbody></table></details>`;
+        }
 
         function _expandItem(it) {
             // pdf.js 常把相鄰數字合併成一個含空格的 item；依 width 依字元比例拆回子 token
