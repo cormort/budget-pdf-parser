@@ -738,6 +738,8 @@ def parse(text: str, fund: str = ""):
                 rest = matched["rest"]
                 if rest.startswith("－"):
                     rest = rest[1:]
+                    # 「…－編列購置電腦軟體150千元」：科目名前的贅詞會擋住二/三級比對
+                    rest = re.sub(r"^(編列|係)+", "", rest)
                     l2m = match_account(
                         rest,
                         lambda it: len(it["code"]) == 2

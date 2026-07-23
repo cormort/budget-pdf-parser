@@ -639,6 +639,8 @@
                         let rest = matched.rest;
                         if (rest.startsWith('－')) {
                             rest = rest.substring(1);
+                            // 「…－編列購置電腦軟體150千元」：科目名前的贅詞會擋住二/三級比對
+                            rest = rest.replace(/^(編列|係)+/, '');
                             const l2m = _matchAccount(rest, it =>
                                 it.code.length === 2 && it.code.startsWith(matched.code));
                             if (l2m) {
