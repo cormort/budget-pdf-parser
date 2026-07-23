@@ -29,6 +29,7 @@
         th { background-color: #e9ecef; color: #495057; font-weight: bold; }
         tbody tr:nth-child(even) { background-color: #f2f6fa; }
         tbody tr:hover { background-color: #e8f0fe; }
+        tr.d-summary { background-color: #fff3cd !important; font-weight: bold; }
         .diff-pos { color: #1a7f37; font-weight: 600; }
         .diff-neg { color: #cf222e; font-weight: 600; }
         .diff-zero { color: #8b949e; }
@@ -1192,8 +1193,16 @@
                 const l3 = el('dL3') ? el('dL3').value : '';
                 const diffVal = el('dDiffType') ? el('dDiffType').value : '';
                 const kw = el('dKw').value.toLowerCase().trim();
+                const tbody = el('dTable').tBodies[0];
+                // Remove previous summary row
+                const oldSum = tbody.querySelector('.d-summary');
+                if (oldSum) oldSum.remove();
+                const curRows = tbody.rows;  // live collection, now without summary
                 let vis = 0;
-                for (let i = 0; i < rows.length; i++) {
+                const sumAmt = {}; amtCols.forEach(c => sumAmt[c] = 0);
+                const sumDiff = {}; comparisons.forEach(c => sumDiff[c.key] = 0);
+                const matched = [];
+                for (let i = 0; i < curRows.length; i++) {
                     const d = data[i];
                     let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv)
                         && (!l1 || d.l1 === l1) && (!l2 || d.l2 === l2) && (!l3 || d.l3 === l3);
@@ -1209,7 +1218,18 @@
                         else if (cmp === 'dec10') ok = base ? diff / base <= -0.1 : false;
                     }
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
-                    rows[i].style.display = ok ? '' : 'none'; if (ok) vis++;
+                    curRows[i].style.display = ok ? '' : 'none';
+                    if (ok) { vis++; matched.push(d); amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; }); comparisons.forEach(c => { sumDiff[c.key] += diffs[i][c.key] ?? 0; }); }
+                }
+                // Insert summary row when a specific科目 is selected and has results
+                const sumLabel = l3 || l2 || l1;
+                if (sumLabel && matched.length) {
+                    const tr = document.createElement('tr');
+                    tr.className = 'd-summary';
+                    tr.innerHTML = `<td style="white-space:nowrap;"></td><td class="d-name" style="font-weight:bold;">${escapeHtml(sumLabel)}科目合計</td>`
+                        + amtCols.map(c => `<td class="d-amt" style="font-weight:bold;">${fmt(sumAmt[c])}</td>`).join('')
+                        + comparisons.map(c => `<td class="d-amt" style="font-weight:bold;">${fmtDiffHtml(sumDiff[c.key])}</td>`).join('');
+                    tbody.insertBefore(tr, tbody.firstChild);
                 }
                 el('dCount').textContent = `顯示 ${vis} / ${data.length} 列`;
             };
@@ -1224,7 +1244,22 @@
             el('dExport').addEventListener('click', () => {
                 const diffHeaders = comparisons.map(c => c.label + '(千元)');
                 const aoa = [['基金', '層級', '計畫', '一級科目', '二級科目', '三級科目', '科目名', ...amtCols.map(c => c + '(千元)'), ...diffHeaders]];
-                for (let i = 0; i < rows.length; i++) { if (rows[i].style.display === 'none') continue; const r = data[i]; aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? ''), ...comparisons.map(c => diffs[i][c.key] ?? '')]); }
+                // Collect visible data rows (skip summary row)
+                const tbody = el('dTable').tBodies[0];
+                let dataIdx = 0;
+                for (let i = 0; i < tbody.rows.length; i++) {
+                    const tr = tbody.rows[i];
+                    if (tr.classList.contains('d-summary')) continue;
+                    if (tr.style.display === 'none') { dataIdx++; continue; }
+                    const r = data[dataIdx]; dataIdx++;
+                    aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? ''), ...comparisons.map(c => diffs[dataIdx - 1][c.key] ?? '')]);
+                }
+                // Append summary row if present
+                const sumTr = tbody.querySelector('.d-summary');
+                if (sumTr) {
+                    const cells = sumTr.querySelectorAll('td');
+                    aoa.push(Array.from(cells).map(td => td.textContent.replace(/,/g, '')));
+                }
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '用途明細表比較');
                 XLSX.writeFile(wb, '用途明細表比較.xlsx');
