@@ -666,8 +666,42 @@
                     amount: amount,
                     description: description || line,
                     raw: line,
+                    code: currentCode,                              // 本列科目代碼(沿用時＝上一列)
+                    confirmed: !!matched && !matched.inferred,      // 本行以科目名確實比對到(非推論/沿用)
                     accountFilled: !matched || !!matched.inferred   // 科目沿用補上或關鍵字推論 → 標記提示
                 });
+            }
+
+            // 依科目順序後處理(不動主迴圈)：每個孤兒句取同計畫「前確定科目A」「後確定科目C」
+            //   (1) A==C → 中間必為 A，去黃底並補齊科目名
+            //   (2) 推論值落在 [A,C] 之外(破壞代碼順序) → 收回為 A(仍留黃底)
+            const _rank = c => _codeIndex.has(c) ? _codeIndex.get(c) : -1;
+            const _namesOf = c => [
+                _codeToName.get(c[0]) || '',
+                c.length >= 2 ? (_codeToName.get(c.slice(0, 2)) || '') : '',
+                c.length >= 3 ? (_codeToName.get(c) || '') : ''
+            ];
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                if (r.confirmed) continue;
+                let A = null, C = null;
+                for (let k = i - 1; k >= 0 && rows[k].plan === r.plan; k--) {
+                    if (rows[k].confirmed) { A = rows[k].code; break; }
+                }
+                for (let k = i + 1; k < rows.length && rows[k].plan === r.plan; k++) {
+                    if (rows[k].confirmed) { C = rows[k].code; break; }
+                }
+                if (A && C && A === C) {                       // (1) 確定就是 A
+                    [r.l1Item, r.l2Item, r.l3Item] = _namesOf(A);
+                    r.code = A;
+                    r.accountFilled = false;
+                } else if (A) {                                // (2) 破壞順序的推論 → 收回為 A
+                    const rk = _rank(r.code);
+                    if (rk < _rank(A) || (C && rk > _rank(C))) {
+                        [r.l1Item, r.l2Item, r.l3Item] = _namesOf(A);
+                        r.code = A;
+                    }
+                }
             }
 
             // 最後一步：去除編列說明的行內空白（保留換行）
