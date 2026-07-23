@@ -1001,9 +1001,30 @@
                 // 寫了合計的區塊 → 採合計、跳過其明細(否則重複)；沒寫合計的區塊 → 加總其明細(否則漏算)。
                 const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
                 let curKey = null, blockHasHeader = false;
+                const addTo = (fund, plan, l1, l2, v) => {
+                    const kk = fund + '|' + _akey(plan) + '|' + _akey(l1) + '|' + _akey(l2);
+                    nMap.set(kk, (nMap.get(kk) || 0) + v);
+                    if (!meta.has(kk)) meta.set(kk, { fund, plan, l1, l2 });
+                };
                 for (const r of nrows) {
-                    if (!r.l2Item) { curKey = null; blockHasHeader = false; continue; }
                     const plan = r.planTop || '';
+                    if (!r.l2Item) {
+                        // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
+                        // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
+                        // 這類列本身 l2 為空(否則整筆漏算)，逐一抽出科目金額並歸戶到其二級科目。
+                        if (r.l1Item && /包括|係/.test(r.description)) {
+                            for (const m of r.description.matchAll(/([一-鿿（）()]{2,22}?)([\d,]+)\s*千\s*元/g)) {
+                                const cand = m[1].replace(/^.*?(包括|係|、|及)/, '') || m[1];
+                                const acc = _matchAccount(cand);
+                                if (!acc || acc.code.length < 2) continue;
+                                const l2n = _codeToName.get(acc.code.slice(0, 2));
+                                if (!l2n) continue;
+                                addTo(r.fund, plan, _codeToName.get(acc.code[0]) || r.l1Item, l2n,
+                                      parseInt(m[2].replace(/,/g, ''), 10) * 1000);
+                            }
+                        }
+                        curKey = null; blockHasHeader = false; continue;
+                    }
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
                     if (k !== curKey) { curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
