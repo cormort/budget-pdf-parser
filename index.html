@@ -996,14 +996,15 @@
                 _parseDetailItems(merged, fund, rows, st, pageFmt === 'decal');  // 跨頁沿用同基金的計畫脈絡
             }
             const amtCols = [];
-            for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
+            const validRows = rows.filter(r => r.fund && !r.fund.includes('農業特別收入基金'));
+            for (const r of validRows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
             amtCols.sort((a, b) => {
                 const _p = c => /前/.test(c) ? 0 : /上年/.test(c) ? 1 : /本年/.test(c) ? 2 : 3;
                 const pa = _p(a), pb = _p(b);
                 return pa !== pb ? pa - pb : a.localeCompare(b);
             });
             const unit = fmt === 'decal' ? '元' : '千元';
-            return { label: label || '來源', rows, amtCols, unit, year, fmt };
+            return { label: label || '來源', rows: validRows, amtCols, unit, year, fmt };
         }
 
         // 把來源欄名換算成絕對年度標籤（供跨檔並排合併）
@@ -1021,6 +1022,7 @@
             const amtCols = [], map = new Map(), order = [];
             for (const s of _detailSources) {
                 for (const r of s.rows) {
+                    if (!r.fund || r.fund.includes('農業特別收入基金')) continue;
                     const k = key(r);
                     let row = map.get(k);
                     if (!row) { row = { fund: r.fund, plan: r.plan, level: r.level, name: r.name, amounts: {} }; map.set(k, row); order.push(k); }
@@ -1225,6 +1227,14 @@
                     }
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
                     curRows[i].style.display = ok ? '' : 'none';
+                    const nameTd = curRows[i].querySelector('.d-name');
+                    if (nameTd) {
+                        if (d.level === '計畫') {
+                            nameTd.textContent = d.plan.split(' - ').slice(-1)[0] || d.name;
+                        } else {
+                            nameTd.textContent = (l1 || l2 || l3) ? (d.plan || d.name) : d.name;
+                        }
+                    }
                     if (ok) { vis++; matched.push(d); if (d.level === '科目') { amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; }); comparisons.forEach(c => { sumDiff[c.key] += diffs[i][c.key] ?? 0; }); } }
                 }
                 // Insert summary row when a specific科目 is selected and has results
