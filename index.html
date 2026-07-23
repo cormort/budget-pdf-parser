@@ -1231,16 +1231,10 @@
                 const diffVal = el('dDiffType') ? el('dDiffType').value : '';
                 const kw = el('dKw').value.toLowerCase().trim();
                 const tbody = el('dTable').tBodies[0];
-                // Remove previous summary row
                 const oldSum = tbody.querySelector('.d-summary');
                 if (oldSum) oldSum.remove();
-                const curRows = tbody.rows;  // live collection, now without summary
-                let vis = 0;
-                const sumAmt = {}; amtCols.forEach(c => sumAmt[c] = 0);
-                const sumDiff = {}; comparisons.forEach(c => sumDiff[c.key] = 0);
-                const matched = [];
-                for (let i = 0; i < curRows.length; i++) {
-                    const d = data[i];
+                // Filter data rows
+                const matched = data.filter((d, i) => {
                     let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv)
                         && (!l1 || d.l1 === l1) && (!l2 || d.l2 === l2) && (!l3 || d.l3 === l3);
                     if (ok && diffVal) {
@@ -1255,18 +1249,60 @@
                         else if (cmp === 'dec10') ok = base ? diff / base <= -0.1 : false;
                     }
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
-                    curRows[i].style.display = ok ? '' : 'none';
-                    const nameTd = curRows[i].querySelector('.d-name');
-                    if (nameTd) {
-                        if (d.level === '計畫') {
-                            nameTd.textContent = d.plan.split(' - ').slice(-1)[0] || d.name;
-                        } else {
-                            nameTd.textContent = (l1 || l2 || l3) ? (d.plan || d.name) : d.name;
+                    return ok;
+                });
+                // Hide all original rows
+                for (let i = 0; i < tbody.rows.length; i++) tbody.rows[i].style.display = 'none';
+                // Determine if we should aggregate by plan (L1 only, no L2/L3)
+                const aggByPlan = l1 && !l2 && !l3;
+                let sumAmt = {}, sumDiff = {};
+                if (aggByPlan) {
+                    // Aggregate: group matching rows by (fund, plan)
+                    const groupMap = new Map();
+                    for (const d of matched) {
+                        const gk = d.fund + '|' + d.plan;
+                        if (!groupMap.has(gk)) groupMap.set(gk, { fund: d.fund, plan: d.plan, amounts: {}, diffAmt: {} });
+                        const g = groupMap.get(gk);
+                        amtCols.forEach(c => { g.amounts[c] = (g.amounts[c] || 0) + (d.amounts[c] ?? 0); });
+                        comparisons.forEach(c => {
+                            const idx = data.indexOf(d);
+                            g.diffAmt[c.key] = (g.diffAmt[c.key] || 0) + (diffs[idx][c.key] ?? 0);
+                        });
+                    }
+                    // Clear tbody and insert aggregated rows
+                    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+                    for (const g of groupMap.values()) {
+                        const tr = document.createElement('tr');
+                        tr.className = 'd-plan';
+                        tr.innerHTML = `<td style="white-space:nowrap;">${escapeHtml(g.fund)}</td><td class="d-name">${escapeHtml(g.plan)}</td>`
+                            + amtCols.map(c => `<td class="d-amt">${fmt(g.amounts[c])}</td>`).join('')
+                            + comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(g.diffAmt[c.key])}</td>`).join('');
+                        tbody.appendChild(tr);
+                    }
+                    sumAmt = {}; amtCols.forEach(c => sumAmt[c] = 0);
+                    sumDiff = {}; comparisons.forEach(c => sumDiff[c.key] = 0);
+                    for (const g of groupMap.values()) {
+                        amtCols.forEach(c => { sumAmt[c] += g.amounts[c] ?? 0; });
+                        comparisons.forEach(c => { sumDiff[c.key] += g.diffAmt[c.key] ?? 0; });
+                    }
+                } else {
+                    // Show individual matching rows
+                    const matchSet = new Set(matched);
+                    for (let i = 0; i < tbody.rows.length; i++) {
+                        const d = data[i];
+                        tbody.rows[i].style.display = matchSet.has(d) ? '' : 'none';
+                    }
+                    sumAmt = {}; amtCols.forEach(c => sumAmt[c] = 0);
+                    sumDiff = {}; comparisons.forEach(c => sumDiff[c.key] = 0);
+                    for (const d of matched) {
+                        if (d.level === '科目') {
+                            const idx = data.indexOf(d);
+                            amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; });
+                            comparisons.forEach(c => { sumDiff[c.key] += diffs[idx][c.key] ?? 0; });
                         }
                     }
-                    if (ok) { vis++; matched.push(d); if (d.level === '科目') { amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; }); comparisons.forEach(c => { sumDiff[c.key] += diffs[i][c.key] ?? 0; }); } }
                 }
-                // Insert summary row when a specific科目 is selected and has results
+                // Summary row
                 const sumLabel = l3 || l2 || l1;
                 if (sumLabel && matched.length) {
                     const tr = document.createElement('tr');
@@ -1276,7 +1312,7 @@
                         + comparisons.map(c => `<td class="d-amt" style="font-weight:bold;">${fmtDiffHtml(sumDiff[c.key])}</td>`).join('');
                     tbody.insertBefore(tr, tbody.firstChild);
                 }
-                el('dCount').textContent = `顯示 ${vis} / ${data.length} 列`;
+                el('dCount').textContent = `顯示 ${matched.length} / ${data.length} 列`;
             };
 
             selects.forEach(([sel], lvl) => sel.addEventListener('change', () => {
@@ -1296,15 +1332,13 @@
             el('dExport').addEventListener('click', () => {
                 const diffHeaders = comparisons.map(c => c.label + '(千元)');
                 const aoa = [['基金', '層級', '計畫', '一級科目', '二級科目', '三級科目', '科目名', ...amtCols.map(c => c + '(千元)'), ...diffHeaders]];
-                // Collect visible data rows (skip summary row)
                 const tbody = el('dTable').tBodies[0];
-                let dataIdx = 0;
                 for (let i = 0; i < tbody.rows.length; i++) {
                     const tr = tbody.rows[i];
                     if (tr.classList.contains('d-summary')) continue;
-                    if (tr.style.display === 'none') { dataIdx++; continue; }
-                    const r = data[dataIdx]; dataIdx++;
-                    aoa.push([r.fund, r.level, r.plan, r.l1 || '', r.l2 || '', r.l3 || '', r.level === '科目' ? r.name : '', ...amtCols.map(c => r.amounts[c] ?? ''), ...comparisons.map(c => diffs[dataIdx - 1][c.key] ?? '')]);
+                    if (tr.style.display === 'none') continue;
+                    const cells = tr.querySelectorAll('td');
+                    aoa.push(Array.from(cells).map(td => td.textContent.replace(/,/g, '')));
                 }
                 // Append summary row if present
                 const sumTr = tbody.querySelector('.d-summary');
