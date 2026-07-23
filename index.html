@@ -8,6 +8,7 @@
         .container { max-width: 98vw; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
         h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
         p, .step-description { color: #6c757d; }
+        td.acct-filled { background: #fff3cd; }  /* 科目為沿用補上、非本行比對，提示人工確認 */
         .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
         .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         #fileInput { display: none; }
@@ -404,6 +405,9 @@
                 }
             }
         });
+        // 依代碼表原始順序（＝科目代碼順序）保留一份，供「下一個科目」關鍵字回退比對用
+        const _chartOrdered = _chart.slice();
+        const _codeIndex = new Map(_chartOrdered.map((it, i) => [it.code, i]));
         _chart.sort((a, b) => b.norm.length - a.norm.length);
 
         const _stripPrefix = (str) => {
@@ -469,7 +473,7 @@
 
             let currentFund = '';
             let currentPlanL1 = '', currentPlanL2 = '', currentPlanL3 = '', currentBudget = '';
-            let currentL1 = '', currentL2 = '', currentL3 = '';
+            let currentL1 = '', currentL2 = '', currentL3 = '', currentCode = '';
             const rows = [];
             const unmatchedLines = [];
 
@@ -481,20 +485,20 @@
                 if (line.startsWith(FUND_MARK)) {
                     currentFund = line.substring(FUND_MARK.length).trim();
                     currentPlanL1 = currentPlanL2 = currentPlanL3 = currentBudget = '';
-                    currentL1 = currentL2 = currentL3 = '';
+                    currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
                 }
 
                 if (_planL1Regex.test(line)) {
                     currentPlanL1 = line.replace(_planL1Regex, '').trim();
                     currentPlanL2 = currentPlanL3 = currentBudget = '';
-                    currentL1 = currentL2 = currentL3 = '';
+                    currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
                 }
                 if (_planL2Regex.test(line)) {
                     currentPlanL2 = line.replace(_planL2Regex, '').trim();
                     currentPlanL3 = currentBudget = '';
-                    currentL1 = currentL2 = currentL3 = '';
+                    currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
                 }
 
@@ -509,7 +513,7 @@
                         const bt = _budgetType(htext);
                         if (bt) {
                             currentBudget = bt;
-                            currentL1 = currentL2 = currentL3 = '';
+                            currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                             continue;
                         }
                     }
@@ -517,7 +521,7 @@
 
                 if (_planL3Regex.test(line) && !line.includes('千元')) {
                     currentPlanL3 = line.replace(_planL3Regex, '').trim();
-                    currentL1 = currentL2 = currentL3 = '';
+                    currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
                 }
 
@@ -561,6 +565,21 @@
                         }
                         if (matched) break;
                     }
+                    // 仍未匹配 → 用特徵字別名（如「…之外包費」對應 279 外包費）
+                    if (!matched) matched = _aliasAccount(_normalize(work));
+                }
+
+                // 條列項(數字./（數字）)句首仍比對不到 → 拿「目前科目」與「下一個科目」關鍵字回退
+                if (!matched && prefixKind !== 'none') {
+                    matched = _keywordFallback(_normalize(work), currentCode);
+                }
+                // 再不中 → 補助/捐助/補貼類依「對象關鍵字」推論三級科目（推論值，黃底提示）
+                if (!matched && prefixKind !== 'none') {
+                    matched = _recipientAccount(_normalize(work), currentCode);
+                }
+                // 再不中 → 科目名嵌在句中(唯一且同一級)才採用（推論值，黃底提示）
+                if (!matched && prefixKind !== 'none') {
+                    matched = _embeddedAccount(_normalize(work), currentCode);
                 }
 
                 let rowL1 = currentL1, rowL2 = currentL2, rowL3 = currentL3;
@@ -568,6 +587,7 @@
 
                 if (matched) {
                     const clen = matched.code.length;
+                    currentCode = matched.code;
                     if (clen === 1) {
                         currentL1 = matched.name;
                         currentL2 = currentL3 = '';
@@ -579,6 +599,7 @@
                                 it.code.length === 2 && it.code.startsWith(matched.code));
                             if (l2m) {
                                 currentL2 = l2m.name;
+                                currentCode = l2m.code;
                                 rowL2 = l2m.name;
                                 rest = l2m.rest;
                                 if (rest.startsWith('－')) rest = rest.substring(1);
@@ -589,6 +610,7 @@
                                     const l2code = l3m.code.substring(0, 2);
                                     currentL2 = _codeToName.get(l2code) || '';
                                     currentL3 = l3m.name;
+                                    currentCode = l3m.code;
                                     rowL2 = currentL2;
                                     rowL3 = l3m.name;
                                     rest = l3m.rest;
@@ -643,8 +665,14 @@
                     l3Item: rowL3,
                     amount: amount,
                     description: description || line,
-                    raw: line
+                    raw: line,
+                    accountFilled: !matched || !!matched.inferred   // 科目沿用補上或關鍵字推論 → 標記提示
                 });
+            }
+
+            // 最後一步：去除編列說明的行內空白（保留換行）
+            for (const r of rows) {
+                r.description = r.description.split('\n').map(ln => ln.replace(/[ \t　]+/g, '')).join('\n');
             }
 
             if (rows.length > 0) {
@@ -731,11 +759,11 @@
                 ${hasFund ? `<td style="white-space:nowrap;">${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
                 ${hasBudget ? `<td style="white-space:nowrap;">${escapeHtml(row.budget)}</td>` : ''}
-                <td>${escapeHtml(row.l1Item)}</td>
-                <td>${escapeHtml(row.l2Item)}</td>
-                <td>${escapeHtml(row.l3Item)}</td>
+                <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l1Item)}</td>
+                <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l2Item)}</td>
+                <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l3Item)}</td>
                 <td style="text-align:right; white-space:nowrap;">${row.amount ? row.amount.toLocaleString() : ""}</td>
-                <td style="white-space: pre-wrap;">${escapeHtml(row.raw || '')}</td>
+                <td style="white-space: pre-wrap;">${escapeHtml(row.description || '')}</td>
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
@@ -900,6 +928,73 @@
         }
 
         const _dashOnly = /^[-－–—]+$/;
+        // 依「說明中含特徵字」對應到常以機關自訂寫法出現的科目（如「…之外包費」）。
+        // 只用高辨識度關鍵字，可安全地在含金額的整段說明字串上比對。
+        function _aliasAccount(nn) {
+            if (!nn) return null;
+            const pick = (...codes) => {
+                const item = _chart.find(it => codes.includes(it.code));
+                return item ? { code: item.code, name: item.name, rest: '' } : null;
+            };
+            if (nn.includes('外包')) return pick('279');
+            if (nn.includes('按日按件') || nn.includes('計時與計件')) return pick('27D');
+            if (nn.includes('媒體宣導') || nn.includes('政策宣導') || nn.includes('業務宣導')) return pick('2A1', '245');
+            return null;
+        }
+
+        // 句首比對不到科目時：拿「目前科目」與「代碼表的下一個科目」兩個候選，
+        // 看哪個科目名關鍵字有出現在句中（預算條列多依代碼順序）。都沒有 → 回 null。
+        function _keywordFallback(normWork, currentCode) {
+            const idx = currentCode != null ? _codeIndex.get(currentCode) : undefined;
+            if (idx == null) return null;
+            for (const it of [_chartOrdered[idx], _chartOrdered[idx + 1]]) {
+                if (it && it.norm.length >= 2 && normWork.includes(it.norm)) {
+                    return { code: it.code, name: it.name, rest: '', inferred: true };
+                }
+            }
+            return null;
+        }
+
+        // 補助/捐助/補貼類：說明只寫「用途對象」不寫三級科目名 → 依對象關鍵字推論三級科目。
+        // 屬「推論值」(inferred)，仍以黃底標示供人工確認。
+        function _recipientAccount(normWork, currentCode) {
+            // 先依上級科目：72/74 皆屬一級科目 7，非 7 家族(如服務費用下的「補助」)不套用，避免拉錯一級
+            if (!currentCode || currentCode[0] !== '7') return null;
+            const s = normWork;
+            const pick = code => {
+                const it = _chart.find(x => x.code === code);
+                return it ? { code: it.code, name: it.name, rest: '', inferred: true } : null;
+            };
+            if (/^(補助|捐助|獎助)/.test(s)) {   // 72 捐助、補助與獎助
+                if (/(政府|地方|縣市|鄉鎮|公所)/.test(s)) return pick('721');   // 補(協)助政府機關(構)
+                if (/(私立|私校)/.test(s)) return pick('723');                  // 捐助私校
+                if (/(學員|學生|獎助生)/.test(s)) return pick('726');           // 獎助學員生給與
+                if (/(農民|漁民|個人|青年)/.test(s)) return pick('724');        // 捐助個人
+                if (/(農會|漁會|協會|團體|法人|公司|合作社|NGO|社區|部落|企業|大專|院校|學校)/.test(s)) return pick('722'); // 捐助國內團體
+                return pick('72Y');                                              // 其他捐助、補助與獎助
+            }
+            if (/^補貼/.test(s)) return /(利息|貸款|存款)/.test(s) ? pick('741') : pick('74Y');
+            if (/^獎勵/.test(s)) return pick('743');                            // 獎勵費用
+            if (/^(慰問|照護|濟助|救濟)/.test(s)) return pick('744');          // 慰問、照護及濟助金
+            return null;
+        }
+
+        // 科目名嵌在句中(非句首)，如「…所需國內旅費227千元」。只在「恰好唯一一個」
+        // 三級科目名(長度≥3)、且其一級科目與當前一致時採用，多個或跨一級 → 不碰(留黃底)。
+        function _embeddedAccount(normWork, currentCode) {
+            if (!currentCode) return null;
+            const l1 = currentCode[0];
+            let found = null;
+            for (const it of _chartOrdered) {
+                if (it.code.length !== 3 || it.norm.length < 3 || it.code[0] !== l1) continue;
+                if (normWork.includes(it.norm)) {
+                    if (found && found.code !== it.code) return null;  // 句中多個科目名 → 放棄
+                    found = it;
+                }
+            }
+            return found ? { code: found.code, name: found.name, rest: '', inferred: true } : null;
+        }
+
         function _matchAccountLoose(name) {
             if (!name) return null;
             const clean = _stripPrefix(name.trim());
@@ -908,19 +1003,8 @@
 
             const nn = _normalize(clean || name);
             if (nn.length >= 2) {
-                // Alias checks for accounts that often appear with agency-specific variations
-                if (nn.includes('外包')) {
-                    const item = _chart.find(it => it.code === '279');
-                    if (item) return { code: item.code, name: item.name, rest: '' };
-                }
-                if (nn.includes('按日按件') || nn.includes('計時與計件')) {
-                    const item = _chart.find(it => it.code === '27D');
-                    if (item) return { code: item.code, name: item.name, rest: '' };
-                }
-                if (nn.includes('媒體宣導') || nn.includes('政策宣導') || nn.includes('業務宣導')) {
-                    const item = _chart.find(it => it.code === '2A1' || it.code === '245');
-                    if (item) return { code: item.code, name: item.name, rest: '' };
-                }
+                const alias = _aliasAccount(nn);
+                if (alias) return alias;
 
                 for (const item of _chart) {
                     if (item.norm.length >= 3 && (nn.includes(item.norm) || item.norm.includes(nn))) {
