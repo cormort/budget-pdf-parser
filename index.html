@@ -1051,10 +1051,10 @@
                 if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
                 const hasAmt = Object.keys(amounts).length > 0;
                 let level, displayName = name;
-                // 決算表計畫無壹/一標號，且頁尾註解常以 一、二、開頭 → 不用標號判計畫，改靠科目表與 fallback
-                if (!isDecal && _planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
-                else if (!isDecal && _planL2Regex.test(name)) { st.p2 = name.replace(_planL2Regex, '').trim(); st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
-                else if (!isDecal && _planL3Regex.test(name)) { st.p3 = name.replace(_planL3Regex, '').trim(); st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                // 計畫標號偵測（預算書/決算書皆適用）
+                if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (_planL2Regex.test(name)) { st.p2 = name.replace(_planL2Regex, '').trim(); st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (_planL3Regex.test(name)) { st.p3 = name.replace(_planL3Regex, '').trim(); st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
                 else {
                     const m = _matchAccountLoose(name);
                     if (m) {
@@ -1065,8 +1065,9 @@
                         level = '科目';
                         displayName = m.name;  // 顯示科目表正式全名（修正 PDF 換行截斷）
                     } else if (hasAmt && /(計畫|基金|支出)$/.test(name)) {
-                        // 決算表計畫無壹/一標號：有金額且像計畫名 → 當計畫
-                        st.p1 = name; st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫';
+                        // 有金額且像計畫名 → 當計畫；去除可能殘留的標號前綴
+                        const cleanName = name.replace(_planL1Regex, '').replace(_planL2Regex, '').trim();
+                        st.p1 = cleanName || name; st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫';
                     } else {
                         continue;  // 無金額又無法歸類 → 換行殘屑/小計，略過
                     }
