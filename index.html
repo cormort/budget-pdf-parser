@@ -1012,9 +1012,11 @@
                         // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
                         // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
                         // 這類列本身 l2 為空(否則整筆漏算)，逐一抽出科目金額並歸戶到其二級科目。
-                        if (r.l1Item && /包括|係/.test(r.description)) {
+                        // 觸發不限「包括/係」句：另有「編列一般房屋租金3,000千元。」這種科目名接在
+                        // 「編列」之後、不在句首的寫法(農村再生基金)，同樣要抽出歸戶。
+                        if (r.l1Item) {
                             for (const m of r.description.matchAll(/([一-鿿（）()]{2,22}?)([\d,]+)\s*千\s*元/g)) {
-                                const cand = m[1].replace(/^.*?(包括|係|、|及)/, '') || m[1];
+                                const cand = m[1].replace(/^.*?(包括|係|編列|、|及)/, '') || m[1];
                                 const acc = _matchAccount(cand);
                                 if (!acc || acc.code.length < 2) continue;
                                 const l2n = _codeToName.get(acc.code.slice(0, 2));
