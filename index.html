@@ -434,8 +434,8 @@
             return '';
         };
 
-        const _planL1Regex = /^[壹貳參肆伍陸柒捌玖拾]、/;
-        const _planL2Regex = /^[一二三四五六七八九十]、/;
+        const _planL1Regex = /^[壹貳參肆伍陸柒捌玖拾]+、/;
+        const _planL2Regex = /^[一二三四五六七八九十]+、/;
         // 中文數字括號且整行不含金額 → 子計畫標題（第三層計畫）
         const _planL3Regex = /^[（(][一二三四五六七八九十]+[）)]/;
         const _numberPrefixRegex = /^\s*(\d+)\.\s*/;
