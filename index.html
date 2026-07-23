@@ -1183,7 +1183,7 @@
             const nameCell = r => {
                 if (r.level === '計畫') return r.plan.split(' - ').slice(-1)[0] || r.name;
                 const hasL = (el('dL1') && el('dL1').value) || (el('dL2') && el('dL2').value) || (el('dL3') && el('dL3').value);
-                return hasL ? r.plan : r.name;
+                return hasL ? r.plan + ' ‧ ' + r.name : r.name;
             };
             const rowHtml = (r, i) => { const cls = rowLevel(r); return `<tr class="${cls}" data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
