@@ -1109,6 +1109,7 @@
                 <button id="dExport" class="btn-success">匯出 xlsx</button>
                 <span id="dCount" style="color:#0056b3;font-style:italic;"></span></div>`;
             const unit = opts.unit || '千元';
+            const el = id => document.getElementById(id);
             const showDiff = () => el('dShowDiff') && el('dShowDiff').checked;
             const activeDiffCol = () => el('dDiffCol') ? el('dDiffCol').value : (comparisons.length ? comparisons[0].key : '');
             const diffColLabel = (key) => { const c = comparisons.find(x => x.key === key); return c ? c.label : key; };
@@ -1119,7 +1120,6 @@
                 ${amtCols.map(c => `<td style="text-align:right;white-space:nowrap;">${fmt(r.amounts[c])}</td>`).join('')}
                 ${comparisons.length ? `<td style="text-align:right;white-space:nowrap;display:${showDiff() ? '' : 'none'};" class="dDiffCell">${fmtDiff(diffs[i][activeDiffCol()])}</td>` : ''}</tr>`;
             cont.innerHTML = srcHTML + filterHTML + `<table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table>`;
-            const el = id => document.getElementById(id);
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
