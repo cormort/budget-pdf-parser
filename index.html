@@ -96,7 +96,7 @@
         <div id="statusMessage" class="message status-message"></div>
         <div id="errorOutput" class="message error-message"></div>
 
-        <div class="step">
+        <div class="step" style="display:none;"><!-- 步驟二手動清理：UI 隱藏、程式碼保留(提取後自動執行 autoClean) -->
             <h2>步驟二：文字清理工具箱</h2>
             <p class="step-description">請依序使用以下工具清理文字，或手動編輯。您可以多次使用這些工具。</p>
             <div class="controls">
@@ -119,7 +119,7 @@
             <textarea id="output-area" placeholder="提取的文字將顯示於此處，您可以在此進行編輯..."></textarea>
         </div>
 
-        <div class="step">
+        <div class="step" style="display:none;"><!-- 步驟三：提取後自動產表，按鈕保留供程式呼叫 -->
             <h2>步驟三：轉換為表格</h2>
             <p class="step-description">清理完文字後，點擊此按鈕生成最終表格。</p>
             <button id="convertBtn" class="btn-success" onclick="convertToTable()" disabled>轉換為表格</button>
@@ -244,8 +244,10 @@
                 ui.outputArea.value = outParts.join('\n').trim();
                 const funds = [...new Set([...ui.outputArea.value.matchAll(new RegExp('^' + FUND_MARK + '(.+)$', 'gm'))].map(m => m[1]))];
                 const fundNote = funds.length > 1 ? `（辨識出 ${funds.length} 個基金：${funds.join('、')}）` : (funds.length === 1 ? `（基金：${funds[0]}）` : '');
-                showMessage(ui.statusMessage, `提取完成！${sectionNote}${fundNote}您現在可以在下方的文字區進行編輯與清理。`);
                 ui.convertBtn.disabled = false;
+                autoClean();        // 步驟二清理(UI 隱藏、程式碼保留)
+                convertToTable();   // 步驟一提取後直接產表
+                showMessage(ui.statusMessage, `提取並產表完成！${sectionNote}${fundNote}`);
             } catch (err) {
                 console.error("提取 PDF 時發生錯誤:", err);
                 showMessage(ui.errorOutput, `提取 PDF 時發生錯誤：${err.message}${err.name === 'PasswordException' ? ' (文件可能已加密)' : ''}`);
@@ -325,11 +327,11 @@
             const lines = text.split('\n');
             const cleanedLines = lines.map(line => {
                 const match = line.match(/^(\s*)/); const leadingWhitespace = match ? match[1] : '';
-                const content = line.substring(leadingWhitespace.length); const cleanedContent = content.replace(/\s+/g, ' ').trim();
+                const content = line.substring(leadingWhitespace.length); const cleanedContent = content.replace(/[\s　]+/g, '').trim();
                 return leadingWhitespace + cleanedContent;
             });
             ui.outputArea.value = cleanedLines.join('\n');
-            showMessage(ui.statusMessage, "已清理行內多餘空白，並保留行首縮排。");
+            showMessage(ui.statusMessage, "已移除行內空白，並保留行首縮排。");
         }
 
         function stripPageNumbers() {
@@ -432,9 +434,9 @@
         };
 
         const _amountPatterns = [
-            /合共\s*([\d,]+)\s*千元/,
-            /編列\s*([\d,]+)\s*千元/,
-            /([\d,]+)\s*千元/,
+            /合共\s*([\d,]+)\s*千\s*元/,
+            /編列\s*([\d,]+)\s*千\s*元/,
+            /([\d,]+)\s*千\s*元/,
         ];
         const _extractAmount = (line) => {
             if (!line) return '';

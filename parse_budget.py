@@ -400,9 +400,9 @@ def match_account(line: str, predicate=None):
 
 
 AMOUNT_PATTERNS = [
-    re.compile(r"合共\s*([\d,]+)\s*千元"),
-    re.compile(r"編列\s*([\d,]+)\s*千元"),
-    re.compile(r"([\d,]+)\s*千元"),
+    re.compile(r"合共\s*([\d,]+)\s*千\s*元"),
+    re.compile(r"編列\s*([\d,]+)\s*千\s*元"),
+    re.compile(r"([\d,]+)\s*千\s*元"),
 ]
 
 
@@ -551,7 +551,7 @@ def clean_internal_whitespace(text: str) -> str:
         m = re.match(r"^(\s*)", line)
         lead = m.group(1) if m else ""
         body = line[len(lead):]
-        body = re.sub(r"\s+", " ", body).strip()
+        body = re.sub(r"\s+", "", body).strip()  # 移除行內空白(含 PDF 換行造成的「千 元」空格)
         out.append(lead + body)
     return "\n".join(out)
 
