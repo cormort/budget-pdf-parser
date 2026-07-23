@@ -857,7 +857,13 @@
                 const xP = px('預算數', '預'), xD = px('決算數', '決');
                 if (xP != null && xD != null) cols = { '預算數': xP + O, '決算數': xD + O };
             }
-            return { cols, rightCut };
+            // 名稱右界：第一個在名稱右側的金額欄(預算書=本年度預算；決算表=預算數)，精準排除右側說明欄
+            let nameMax = rightCut;
+            if (cols) {
+                if ('本年度預算' in cols) nameMax = cols['本年度預算'] - 20;
+                else nameMax = Math.min(...Object.values(cols)) - 20;
+            }
+            return { cols, rightCut: nameMax };
         }
 
         const _dashOnly = /^[-－–—]+$/;
@@ -881,10 +887,11 @@
             for (const it of line) {
                 const t = it.str.trim();
                 if (!t || _dashOnly.test(t)) continue;  // 空金額佔位「-」不計
-                if (_numRe.test(t.replace(/-/g, '')) && /\d/.test(t)) {
+                if (/^[-－]?[\d,]+(\.\d+)?$/.test(t)) {  // 數字類(含決算表的比較增減金額、%)
+                    if (t.includes('.')) continue;  // 小數＝百分比欄，忽略(不進金額也不進名稱)
                     let best = null, bd = 1e9;
                     for (const [k, cx] of entries) { const d = Math.abs(cx - it.x); if (d < bd) { bd = d; best = k; } }
-                    if (best && bd <= 45 && !(best in amounts)) {
+                    if (best && bd <= 45 && !(best in amounts)) {  // 太遠(比較增減金額)不歸欄
                         const n = parseInt(t.replace(/,/g, ''), 10);
                         amounts[best] = isNaN(n) ? null : n;
                     }
@@ -962,7 +969,7 @@
                     continue;
                 }
                 if (fund !== curFund) { st = { p1: '', p2: '', p3: '', l1: '', l2: '', l3: '' }; curFund = fund; }
-                _parseDetailItems(merged, fund, rows, st);  // 跨頁沿用同基金的計畫脈絡
+                _parseDetailItems(merged, fund, rows, st, pageFmt === 'decal');  // 跨頁沿用同基金的計畫脈絡
             }
             const amtCols = [];
             for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
@@ -1015,14 +1022,16 @@
             return items;
         }
 
-        function _parseDetailItems(items, fund, out, st) {
+        function _parseDetailItems(items, fund, out, st, isDecal) {
             for (const { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
+                if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
                 const hasAmt = Object.keys(amounts).length > 0;
                 let level, displayName = name;
-                if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
-                else if (_planL2Regex.test(name)) { st.p2 = name.replace(_planL2Regex, '').trim(); st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
-                else if (_planL3Regex.test(name)) { st.p3 = name.replace(_planL3Regex, '').trim(); st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                // 決算表計畫無壹/一標號，且頁尾註解常以 一、二、開頭 → 不用標號判計畫，改靠科目表與 fallback
+                if (!isDecal && _planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (!isDecal && _planL2Regex.test(name)) { st.p2 = name.replace(_planL2Regex, '').trim(); st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
+                else if (!isDecal && _planL3Regex.test(name)) { st.p3 = name.replace(_planL3Regex, '').trim(); st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
                 else {
                     const m = _matchAccountLoose(name);
                     if (m) {
