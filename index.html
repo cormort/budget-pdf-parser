@@ -1219,7 +1219,7 @@
                     }
                     if (ok && kw) ok = (d.fund + d.plan + d.name).toLowerCase().includes(kw);
                     curRows[i].style.display = ok ? '' : 'none';
-                    if (ok) { vis++; matched.push(d); amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; }); comparisons.forEach(c => { sumDiff[c.key] += diffs[i][c.key] ?? 0; }); }
+                    if (ok) { vis++; matched.push(d); if (d.level === '科目') { amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; }); comparisons.forEach(c => { sumDiff[c.key] += diffs[i][c.key] ?? 0; }); } }
                 }
                 // Insert summary row when a specific科目 is selected and has results
                 const sumLabel = l3 || l2 || l1;
