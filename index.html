@@ -1049,6 +1049,7 @@
             for (const { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
                 if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
+                if (fund && name.replace(/[\s　]/g, '') === fund) continue;  // 基金合計行（基金名本身），略過
                 const hasAmt = Object.keys(amounts).length > 0;
                 let level, displayName = name;
                 // 計畫標號偵測（預算書/決算書皆適用）
