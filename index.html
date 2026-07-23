@@ -996,6 +996,11 @@
             }
             const amtCols = [];
             for (const r of rows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
+            amtCols.sort((a, b) => {
+                const _p = c => /前/.test(c) ? 0 : /上年/.test(c) ? 1 : /本年/.test(c) ? 2 : 3;
+                const pa = _p(a), pb = _p(b);
+                return pa !== pb ? pa - pb : a.localeCompare(b);
+            });
             const unit = fmt === 'decal' ? '元' : '千元';
             return { label: label || '來源', rows, amtCols, unit, year, fmt };
         }
