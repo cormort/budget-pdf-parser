@@ -666,7 +666,7 @@
                     l2Item: rowL2,
                     l3Item: rowL3,
                     amount: amount,
-                    description: description || line,
+                    description: line,   // 編列說明保留原始整句(含科目文字)，不剪科目名
                     raw: line,
                     code: currentCode,                              // 本列科目代碼(沿用時＝上一列)
                     confirmed: !!matched && !matched.inferred,      // 本行以科目名確實比對到(非推論/沿用)
