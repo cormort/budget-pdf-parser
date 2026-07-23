@@ -595,12 +595,14 @@ def auto_clean(text: str) -> str:
 
 # ----- Parser -----
 
-PLAN_L1_REGEX = re.compile(r"^[壹貳參肆伍陸柒捌玖拾]、")
-PLAN_L2_REGEX = re.compile(r"^[一二三四五六七八九十]、")
+PLAN_L1_REGEX = re.compile(r"^[壹貳參肆伍陸柒捌玖拾]+、")
+PLAN_L2_REGEX = re.compile(r"^[一二三四五六七八九十]+、")  # +：支援「十一、」等兩位數
 # 中文數字括號且整行不含金額 → 視為子計畫標題（第三層計畫），如「(一)精進豬隻保險業務計畫」
 PLAN_L3_REGEX = re.compile(r"^[（(][一二三四五六七八九十]+[）)]")
 NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
+# 中文數字＋頓號當條列前綴（「四、其他專業服務費…」＝科目明細，非計畫）
+CJK_NUM_PREFIX_REGEX = re.compile(r"^\s*[一二三四五六七八九十]+、\s*")
 CALC_NOTE_REGEX = re.compile(r"[=＝+＋\[\]％%]")
 
 
@@ -630,12 +632,18 @@ def parse(text: str, fund: str = ""):
         if not line:
             continue
 
-        if PLAN_L1_REGEX.match(line):
+        # 「機關＋基金＋計畫」黏成一行的計畫標題(不帶標號)，如「農業部○○基金△△計畫」
+        if line.endswith("計畫") and "基金" in line and "千元" not in line:
+            current_plan_l1 = line.rsplit("基金", 1)[-1].strip()
+            current_plan_l2 = current_plan_l3 = current_budget = ""
+            current_l1 = current_l2 = current_l3 = ""
+            continue
+        if PLAN_L1_REGEX.match(line) and "千元" not in line:
             current_plan_l1 = PLAN_L1_REGEX.sub("", line).strip()
             current_plan_l2 = current_plan_l3 = current_budget = ""
             current_l1 = current_l2 = current_l3 = ""
             continue
-        if PLAN_L2_REGEX.match(line):
+        if PLAN_L2_REGEX.match(line) and "千元" not in line:
             current_plan_l2 = PLAN_L2_REGEX.sub("", line).strip()
             current_plan_l3 = current_budget = ""
             current_l1 = current_l2 = current_l3 = ""
@@ -685,6 +693,11 @@ def parse(text: str, fund: str = ""):
             if m:
                 work = line[m.end():]
                 prefix_kind = "paren"
+            else:
+                m = CJK_NUM_PREFIX_REGEX.match(line)
+                if m:
+                    work = line[m.end():]
+                    prefix_kind = "number"
 
         if prefix_kind == "none":
             level_pref = [1, 2, 3]

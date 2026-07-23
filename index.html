@@ -455,6 +455,8 @@
         const _planL3Regex = /^[（(][一二三四五六七八九十]+[）)]/;
         const _numberPrefixRegex = /^\s*(\d+)\.\s*/;
         const _parenPrefixRegex = /^\s*\((\d+|[一二三四五六七八九十]+)\)\s*/;
+        // 中文數字＋頓號當條列前綴（如「四、其他專業服務費27,400千元」＝科目明細，非計畫）
+        const _cjkNumPrefixRegex = /^\s*[一二三四五六七八九十]+、\s*/;
 
         // 預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目
         const _budgetType = (s) => {
@@ -490,13 +492,20 @@
                     continue;
                 }
 
-                if (_planL1Regex.test(line)) {
+                // 「機關＋基金＋計畫」黏成一行的計畫標題(不帶標號)，如「農業部○○基金△△計畫」
+                if (line.endsWith('計畫') && line.includes('基金') && !line.includes('千元')) {
+                    currentPlanL1 = line.split('基金').pop().trim();
+                    currentPlanL2 = currentPlanL3 = currentBudget = '';
+                    currentL1 = currentL2 = currentL3 = ''; currentCode = '';
+                    continue;
+                }
+                if (_planL1Regex.test(line) && !line.includes('千元')) {
                     currentPlanL1 = line.replace(_planL1Regex, '').trim();
                     currentPlanL2 = currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
                 }
-                if (_planL2Regex.test(line)) {
+                if (_planL2Regex.test(line) && !line.includes('千元')) {
                     currentPlanL2 = line.replace(_planL2Regex, '').trim();
                     currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = ''; currentCode = '';
@@ -543,6 +552,10 @@
                 else {
                     pm = line.match(_parenPrefixRegex);
                     if (pm) { work = line.substring(pm[0].length); prefixKind = 'paren'; }
+                    else {
+                        pm = line.match(_cjkNumPrefixRegex);   // 「四、其他專業服務費…」非計畫時的科目明細
+                        if (pm) { work = line.substring(pm[0].length); prefixKind = 'number'; }
+                    }
                 }
 
                 let levelPref;
