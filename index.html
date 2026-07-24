@@ -72,6 +72,8 @@
         #unitTable .up-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; }
         #unitTable .up-plan td { background: #eef4fb; font-weight: 700; }
         #unitTable .up-branch td { background: #f6f8fa; font-weight: 600; }
+        #unitTable .up-desc { white-space: normal; line-height: 1.5; font-weight: normal; max-width: 560px; }
+        #unitTable .narr-un { background: #fff3cd; }  /* 未對應到任何科目的句子 */
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
     </style>
@@ -1052,26 +1054,53 @@
             document.getElementById('fileNameDisplayU').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
         });
 
-        // 把一頁的字組成左表列 {name, amt, unit}，依 y 鄰近分群
+        const _unitFmt = n => (+n).toLocaleString('en-US');
+
+        // 把一頁的字組成左表列 {name, amt, unit, narr}，依 y 鄰近分群
+        // x<160 代碼/名稱、200–292 金額、292–359 承辦單位、>=359 右側說明
         function _unitLines(items) {
             const ws = items.map(it => ({ x: it.transform[4], y: it.transform[5], s: it.str }))
                 .filter(w => w.s.trim() !== '').sort((a, b) => b.y - a.y);
             const rows = [];
             for (const w of ws) {
                 let r = rows[rows.length - 1];
-                if (!r || Math.abs(r._y - w.y) > 6) { r = { _y: w.y, name: [], amt: '', unit: [] }; rows.push(r); }
+                if (!r || Math.abs(r._y - w.y) > 6) { r = { _y: w.y, name: [], amt: '', unit: [], narr: [] }; rows.push(r); }
                 const s = w.s.trim();  // pdf.js 常把整段（含前導全形空白）併成一個 item
                 if (w.x < 160) r.name.push([w.x, w.s]);
                 else if (w.x >= 200 && w.x < 292 && _unitNum.test(s)) {
                     const m = s.match(_unitNum); r.amt += m[0];
                     const rest = s.slice(m[0].length); if (rest) r.unit.push([w.x, rest]);
-                } else if (w.x >= 292 && w.x < 360) r.unit.push([w.x, w.s]);
+                } else if (w.x >= 292 && w.x < 359) r.unit.push([w.x, w.s]);
+                else if (w.x >= 359) r.narr.push([w.x, w.s]);
             }
-            return rows.map(r => ({
-                name: r.name.sort((a, b) => a[0] - b[0]).map(a => a[1]).join(''),
-                amt: r.amt,
-                unit: r.unit.sort((a, b) => a[0] - b[0]).map(a => a[1]).join(''),
-            }));
+            const j = a => a.sort((x, y) => x[0] - y[0]).map(x => x[1]).join('');
+            return rows.map(r => ({ name: j(r.name), amt: r.amt, unit: j(r.unit), narr: j(r.narr) }));
+        }
+
+        // 清掉頁首/欄頭滲入右側說明的文字（上游清理，勝過下游打補丁）
+        function _cleanNarr(s) {
+            return s.replace(/[\s　]/g, '')
+                .replace(/行政院主計總處/g, '').replace(/歲出計畫提要及分支計畫概況表/g, '')
+                .replace(/經資門併計/g, '').replace(/中華民國\d+年度/g, '')
+                .replace(/單位：新臺幣千元/g, '').replace(/預算金額[\d,]+/g, '').replace(/說明/g, '');
+        }
+
+        // 分支結案：把該分支的說明切句、依金額掛到對應科目、算出未認領句子（黃底）
+        // 只在「金額於分支內唯一屬於一個科目、且只出現在一句」時才填，否則留白（不臆測）
+        function _finalizeBranch(br) {
+            if (!br) return;
+            const frags = _cleanNarr(br.narr).split('。').map(f => f.trim()).filter(Boolean).map(f => f + '。');
+            const cnt = {};
+            for (const c of br.codeRows) cnt[c.amount] = (cnt[c.amount] || 0) + 1;
+            const claimed = new Set();
+            for (const c of br.codeRows) {
+                if (cnt[c.amount] > 1) continue;               // 同金額多科目 → 留白
+                const re = new RegExp('(?<![\\d,])' + _unitFmt(c.amount) + '千元');  // 邊界，避免 4千元 命中 64千元
+                const hits = frags.filter(f => re.test(f));
+                if (hits.length !== 1) continue;               // 多句/零句 → 留白
+                c.desc = hits[0]; claimed.add(hits[0]);
+            }
+            br.row.descFrags = frags.map(f => ({ t: f, matched: claimed.has(f) }));
         }
 
         async function parseUnitPlanPdf() {
@@ -1085,7 +1114,7 @@
                 const data = new Uint8Array(await files[0].arrayBuffer());
                 const pdf = await pdfjsLib.getDocument({ data }).promise;
                 const out = [];
-                let plan = null, ctx = { branch: null, l1: null };
+                let plan = null, ctx = { l1: null }, br = null;
                 for (let i = 1; i <= pdf.numPages; i++) {
                     show(el.st, `正在處理第 ${i} / ${pdf.numPages} 頁...`);
                     const page = await pdf.getPage(i);
@@ -1094,22 +1123,27 @@
                     if (!flat.includes(_UNIT_TITLE)) continue;
                     // pdf.js 的字序與 pdfplumber 不同：表頭以「預算金額<金額><10碼><名稱>工作計畫名稱及編號」順序出現
                     const hm = flat.match(/預算金額([\d,]+?)(\d{10})([^\d]+?)工作計畫名稱及編號/);
-                    if (hm && (!plan || plan.code !== hm[2])) { plan = { code: hm[2], name: hm[3], budget: hm[1] }; ctx = { branch: null, l1: null }; }
+                    if (hm && (!plan || plan.code !== hm[2])) { _finalizeBranch(br); br = null; plan = { code: hm[2], name: hm[3], budget: hm[1] }; ctx = { l1: null }; }
                     if (!plan) continue;
                     for (const ln of _unitLines(tc.items)) {
-                        if (!ln.amt) continue;
                         const m = ln.name.trim().match(/^(\d{2,4})\s*(.+)$/);
-                        if (!m) continue;
-                        const code = m[1], cname = m[2].trim();
-                        let level, l1c = '', l1n = '', l2c = '', l2n = '', unit = '';
-                        if (code.length === 2) { ctx = { branch: { code, name: cname }, l1: null }; level = '分支計畫'; unit = ln.unit; }
-                        else if (code.length === 4 && code.endsWith('000')) { ctx.l1 = { code, name: cname }; level = '用途別一級'; l1c = code; l1n = cname; }
+                        if (!m || !ln.amt) { if (br && ln.narr) br.narr += ln.narr; continue; }  // 純敘述列 → 併入當前分支
+                        const code = m[1], cname = m[2].trim(), amount = ln.amt.replace(/,/g, '');
+                        let level, l1c = '', l1n = '', l2c = '', l2n = '';
+                        if (code.length === 2) {
+                            _finalizeBranch(br);
+                            const row = { planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: code, branchName: cname, l1Code: '', l1Name: '', l2Code: '', l2Name: '', level: '分支計畫', amount, desc: '', descFrags: [] };
+                            out.push(row); br = { row, narr: ln.narr || '', codeRows: [] }; ctx = { l1: null };
+                            continue;
+                        } else if (code.length === 4 && code.endsWith('000')) { ctx.l1 = { code, name: cname }; level = '用途別一級'; l1c = code; l1n = cname; }
                         else if (code.length === 4) { level = '用途別二級'; l1c = ctx.l1 ? ctx.l1.code : ''; l1n = ctx.l1 ? ctx.l1.name : ''; l2c = code; l2n = cname; }
                         else continue;
-                        const b = ctx.branch || { code: '', name: '' };
-                        out.push({ planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: b.code, branchName: b.name, l1Code: l1c, l1Name: l1n, l2Code: l2c, l2Name: l2n, level, amount: ln.amt.replace(/,/g, ''), unit });
+                        const row = { planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: br ? br.row.branchCode : '', branchName: br ? br.row.branchName : '', l1Code: l1c, l1Name: l1n, l2Code: l2c, l2Name: l2n, level, amount, desc: '' };
+                        out.push(row);
+                        if (br) { br.codeRows.push(row); if (ln.narr) br.narr += ln.narr; }
                     }
                 }
+                _finalizeBranch(br);
                 _unitRows = out;
                 if (!out.length) { show(el.er, '找不到「歲出計畫提要及分支計畫概況表」，請確認檔案。'); document.getElementById('extractBtnU').disabled = false; return; }
                 _renderUnitPlan(out);
@@ -1138,6 +1172,8 @@
             };
             const fmt = n => (+n).toLocaleString('en-US');
             const cls = { '分支計畫': 'up-branch', '用途別一級': 'up-l1', '用途別二級': 'up-l2' };
+            // 分支說明：完整原文依序拼回，未認領的句子加黃底（句子本身不刪、不斷）
+            const branchDesc = r => (r.descFrags || []).map(f => f.matched ? escapeHtml(f.t) : `<span class="narr-un">${escapeHtml(f.t)}</span>`).join('');
             let lastPlan = null, body = '';
             for (const r of rows) {
                 if (r.planCode !== lastPlan) {
@@ -1147,16 +1183,18 @@
                 const code = r.level === '分支計畫' ? r.branchCode : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
                 const name = r.level === '分支計畫' ? r.branchName : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
                 const pad = r.level === '用途別二級' ? 'padding-left:3em;' : (r.level === '用途別一級' ? 'padding-left:1.6em;' : 'padding-left:.4em;');
-                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td style="white-space:pre-wrap;">${escapeHtml(r.unit || '')}</td></tr>`;
+                const desc = r.level === '分支計畫' ? branchDesc(r) : escapeHtml(r.desc || '');
+                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td class="up-desc">${desc}</td></tr>`;
             }
             document.getElementById('tableContainerU').innerHTML =
-                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫</th><th>代碼</th><th style="min-width:220px;">分支計畫／用途別科目</th><th>金額</th><th>承辦單位</th></tr></thead><tbody>${body}</tbody></table></div>`;
+                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫</th><th>代碼</th><th style="min-width:220px;">分支計畫／用途別科目</th><th>金額</th><th style="min-width:360px;">說明（分支列＝全文，科目列＝金額對齊句；黃底＝未對應到科目）</th></tr></thead><tbody>${body}</tbody></table></div>`;
         }
 
         function exportUnitPlanXlsx() {
             if (!_unitRows.length) return;
-            const head = ['工作計畫代碼', '工作計畫名稱', '工作計畫預算', '分支計畫代碼', '分支計畫名稱', '用途別一級代碼', '用途別一級名稱', '用途別二級代碼', '用途別二級名稱', '層級', '金額', '承辦單位'];
-            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.planBudget.replace(/,/g, ''), r.branchCode, r.branchName, r.l1Code, r.l1Name, r.l2Code, r.l2Name, r.level, +r.amount, r.unit])];
+            const head = ['工作計畫代碼', '工作計畫名稱', '工作計畫預算', '分支計畫代碼', '分支計畫名稱', '用途別一級代碼', '用途別一級名稱', '用途別二級代碼', '用途別二級名稱', '層級', '金額', '說明'];
+            const desc = r => r.level === '分支計畫' ? (r.descFrags || []).map(f => f.t).join('') : (r.desc || '');
+            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.planBudget.replace(/,/g, ''), r.branchCode, r.branchName, r.l1Code, r.l1Name, r.l2Code, r.l2Name, r.level, +r.amount, desc(r)])];
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '歲出計畫概況表');
             XLSX.writeFile(wb, '歲出計畫提要及分支計畫概況表.xlsx');
