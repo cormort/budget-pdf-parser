@@ -155,6 +155,9 @@
                     <input type="file" id="fileInputR" accept=".pdf">
                     <span id="fileNameDisplayR">尚未選擇檔案</span>
                     <button id="extractBtnR" class="btn-main" onclick="runReconcile()">解析並對帳</button>
+                    <select id="fundFilterR" style="display:none;margin-left:8px;padding:4px 8px;" onchange="_filterReconcile()">
+                        <option value="">全部基金</option>
+                    </select>
                 </div>
             </div>
             <div id="statusMessageR" class="message status-message"></div>
@@ -1049,6 +1052,8 @@
             return result;
         }
 
+        let _reconcileData = { diff: [], onlyOne: [], ok: [] };
+
         const _akey = s => (s || '').replace(/[\s　、（）()－\-]/g, '');   // 科目名對帳用正規化
 
         async function runReconcile() {
@@ -1137,6 +1142,8 @@
                     if (n != null && d != null) (n === d ? ok : diff).push({ ...row, delta: n - d });
                     else onlyOne.push(row);
                 }
+                _reconcileData = { diff, onlyOne, ok };
+                _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
                 show('statusMessageR', `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。請優先核對「金額不一致」。`);
             } catch (e) { console.error(e); show('errorOutputR', '對帳失敗：' + e.message); }
@@ -1164,11 +1171,36 @@
             const onlyH = onlyOne.length ? `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#b8860b;">🟡 僅一節出現（${onlyOne.length}）— 多為計畫階層命名不一致或粒度差異，優先度低</summary>
                  <p class="step-description" style="margin:6px 0;">只有一節有此科目。「僅用途明細表有」多為正常(編列說明未描述)；「僅編列說明有」較需留意。計畫層級比對時此類偏多，屬命名對不齊的雜訊。</p>
                  <table class="recon-table">${head}<tbody>${onlyOne.map(r => rowH(r, false)).join('')}</tbody></table></details>` : '';
-            cont.innerHTML =
+            const fundSummary = (() => {
+                const funds = [...new Set([...diff, ...onlyOne, ...ok].map(r => r.fund).filter(Boolean))].sort();
+                if (funds.length < 2) return '';
+                const rows = funds.map(f => {
+                    const d = diff.filter(r => r.fund === f).length;
+                    const o = onlyOne.filter(r => r.fund === f).length;
+                    const k = ok.filter(r => r.fund === f).length;
+                    return `<tr><td style="white-space:nowrap;">${escapeHtml(f)}</td><td style="text-align:center;${d ? 'color:#dc3545;font-weight:600;' : ''}">${d}</td><td style="text-align:center;">${o}</td><td style="text-align:center;">${k}</td></tr>`;
+                }).join('');
+                return `<table class="recon-table" style="margin-bottom:16px;"><thead><tr><th>基金</th><th style="text-align:center;">不一致</th><th style="text-align:center;">僅一節</th><th style="text-align:center;">相符</th></tr></thead><tbody>${rows}</tbody></table>`;
+            })();
+            cont.innerHTML = fundSummary +
                 section('🔴 金額不一致', '兩節皆有此(計畫＋二級科目)、但金額不同——最需優先人工核對(可能是分類差異或漏抓)。', diff, true) +
                 onlyH +
                 `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#28a745;">✅ 金額相符（${ok.length}）</summary>
                  <table class="recon-table">${head}<tbody>${ok.map(r => rowH(r, false)).join('')}</tbody></table></details>`;
+        }
+
+        function _populateFundFilter(diff, onlyOne, ok) {
+            const sel = document.getElementById('fundFilterR');
+            const funds = [...new Set([...diff, ...onlyOne, ...ok].map(r => r.fund).filter(Boolean))].sort();
+            sel.innerHTML = '<option value="">全部基金</option>' + funds.map(f => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
+            sel.style.display = funds.length > 1 ? '' : 'none';
+        }
+
+        function _filterReconcile() {
+            const fund = document.getElementById('fundFilterR').value;
+            const { diff, onlyOne, ok } = _reconcileData;
+            const filter = arr => fund ? arr.filter(r => r.fund === fund) : arr;
+            _renderReconcile(filter(diff), filter(onlyOne), filter(ok));
         }
 
         function _expandItem(it) {
