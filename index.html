@@ -74,7 +74,8 @@
         #unitTable .up-branch td { background: #f6f8fa; font-weight: 600; }
         #unitTable .up-total td { background: #0056b3; color: #fff; font-weight: 700; position: sticky; top: 34px; z-index: 1; }
         #unitTable .up-desc { white-space: normal; line-height: 1.5; font-weight: normal; max-width: 560px; }
-        #unitTable .narr-un { background: #fff3cd; }  /* 未對應到任何科目的句子 */
+        #unitTable .narr-un { background: #fff3cd; }  /* 順序推論／未對應到任何科目的句子（黃） */
+        #unitTable td.narr-amb { background: #ffd8b5; }  /* 模糊：區間多科目、候選句重複填入，不確定（橘） */
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
     </style>
@@ -1109,11 +1110,20 @@
                 if (cr[i].descIdx != null) { i++; continue; }
                 let j = i; while (j < cr.length && cr[j].descIdx == null) j++;
                 const prev = i > 0 ? cr[i - 1].descIdx : null, next = j < cr.length ? cr[j].descIdx : null;
+                const run = j - i;
                 if (prev != null && next != null) {
                     const gap = [];
                     for (let k = prev + 1; k < next; k++) if (!claimed.has(k)) gap.push(k);
-                    if (gap.length === j - i) {                // 數量吻合才指派，否則留白（不臆測中間是哪個）
-                        for (let t = 0; t < gap.length; t++) { cr[i + t].descIdx = gap[t]; cr[i + t].desc = frags[gap[t]]; cr[i + t].inferred = true; claimed.add(gap[t]); }
+                    if (gap.length > 0) {
+                        if (gap.length === run) {                  // 數量吻合 → 1:1 依序（推論）
+                            for (let t = 0; t < run; t++) { cr[i + t].descIdx = gap[t]; cr[i + t].desc = frags[gap[t]]; cr[i + t].inferred = true; }
+                        } else if (run === 1) {                    // 單一科目 → 吃下區間全部句子（推論）
+                            cr[i].desc = gap.map(g => frags[g]).join(''); cr[i].inferred = true;
+                        } else {                                   // 多科目且數量不等 → 模糊：候選句重複塞進每個科目，標不確定
+                            const joined = gap.map(g => frags[g]).join('');
+                            for (let t = 0; t < run; t++) { cr[i + t].desc = joined; cr[i + t].ambiguous = true; }
+                        }
+                        gap.forEach(g => claimed.add(g));
                     }
                 }
                 i = j;
@@ -1225,8 +1235,9 @@
                 const acctCode = r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
                 const acctName = r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
                 const desc = r.level === '分支計畫' ? branchDesc(r) : escapeHtml(r.desc || '');
-                const descCls = 'up-desc' + (r.inferred ? ' narr-un' : '');
-                const descTitle = r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '';
+                const descCls = 'up-desc' + (r.ambiguous ? ' narr-amb' : (r.inferred ? ' narr-un' : ''));
+                const descTitle = r.ambiguous ? ' title="不確定：此金額無法對應到句子，區間內有多個科目，以下為候選文字（重複顯示），請人工確認"'
+                    : (r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '');
                 body += `<tr class="${cls[r.level]}">`
                     + `<td style="white-space:nowrap;">${escapeHtml(r.planCode)}</td><td>${escapeHtml(r.planName)}</td>`
                     + `<td style="white-space:nowrap;">${escapeHtml(r.branchCode)}</td><td>${escapeHtml(r.branchName)}</td>`
@@ -1235,7 +1246,7 @@
                     + `<td class="${descCls}"${descTitle}>${desc}</td></tr>`;
             }
             document.getElementById('tableContainerU').innerHTML = filterHTML + reconLine +
-                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（分支列＝全文，科目列＝金額對齊句；黃底＝未對應到科目）</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
+                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（科目列：白＝金額命中、黃＝順序推論、橘＝區間多科目候選待確認；分支列＝全文，黃底句＝未對到科目）</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
         }
 
         function exportUnitPlanXlsx() {
