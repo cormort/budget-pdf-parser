@@ -66,6 +66,12 @@
         .tab-bar { display: flex; gap: 4px; border-bottom: 2px solid #0056b3; margin-bottom: 20px; }
         .tab-btn { padding: 12px 22px; background: #e9ecef; color: #495057; border: none; border-radius: 8px 8px 0 0; font-size: 15px; font-weight: bold; cursor: pointer; }
         .tab-btn.active { background: #0056b3; color: #fff; }
+        #unitTable { border-collapse: collapse; width: 100%; font-size: 13px; }
+        #unitTable th { position: sticky; top: 0; background: #0056b3; color: #fff; padding: 6px 8px; text-align: left; z-index: 1; }
+        #unitTable td { border-bottom: 1px solid #eaecef; padding: 4px 8px; }
+        #unitTable .up-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; }
+        #unitTable .up-plan td { background: #eef4fb; font-weight: 700; }
+        #unitTable .up-branch td { background: #f6f8fa; font-weight: 600; }
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
     </style>
@@ -78,6 +84,7 @@
             <button class="tab-btn active" onclick="switchTab('narrative')">用途明細表說明（編列說明）</button>
             <button class="tab-btn" onclick="switchTab('detail')">用途明細表（本年度/上年度預算・前年度決算）</button>
             <button class="tab-btn" onclick="switchTab('reconcile')">金額一致性對帳（提醒）</button>
+            <button class="tab-btn" onclick="switchTab('unitplan')">歲出計畫提要及分支計畫概況表（單位預算）</button>
         </div>
 
         <div id="tab-narrative" class="tab-pane active">
@@ -164,6 +171,23 @@
             <div id="errorOutputR" class="message error-message"></div>
             <div id="tableContainerR"><p>對帳結果將顯示於此處。</p></div>
         </div><!-- /tab-reconcile -->
+
+        <div id="tab-unitplan" class="tab-pane">
+            <div class="step">
+                <h2>歲出計畫提要及分支計畫概況表</h2>
+                <p class="step-description">上傳<strong>單位預算案</strong>PDF（如「行政院主計總處單位預算案」）。系統解析「歲出計畫提要及分支計畫概況表」的左側結構表，依 <strong>工作計畫(10碼) → 分支計畫(2碼) → 用途別一級(X000) → 用途別二級</strong> 層級呈現，右側敘述文字不納入。內建各層級加總對帳（二級→一級→分支→工作計畫），不符會標紅。</p>
+                <div class="controls">
+                    <label for="fileInputU" class="file-label">選擇 PDF 檔案</label>
+                    <input type="file" id="fileInputU" accept=".pdf">
+                    <span id="fileNameDisplayU">尚未選擇檔案</span>
+                    <button id="extractBtnU" class="btn-main" onclick="parseUnitPlanPdf()">解析</button>
+                    <button id="exportBtnU" class="btn-success" style="display:none;" onclick="exportUnitPlanXlsx()">匯出 xlsx</button>
+                </div>
+            </div>
+            <div id="statusMessageU" class="message status-message"></div>
+            <div id="errorOutputU" class="message error-message"></div>
+            <div id="tableContainerU"><p>結構表將顯示於此處。</p></div>
+        </div><!-- /tab-unitplan -->
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
@@ -1017,6 +1041,124 @@
             const f = document.getElementById('fileInputR').files;
             document.getElementById('fileNameDisplayR').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
         });
+
+        // ===== 第四個 tab：歲出計畫提要及分支計畫概況表（單位預算） =====
+        // 對應 parse_unit_plan.py：靠字元 x 座標切左表，靠代碼判層級。
+        const _UNIT_TITLE = '歲出計畫提要及分支計畫概況表';
+        const _unitNum = /^-?[\d,]+/;
+        let _unitRows = [];
+        document.getElementById('fileInputU').addEventListener('change', () => {
+            const f = document.getElementById('fileInputU').files;
+            document.getElementById('fileNameDisplayU').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
+        });
+
+        // 把一頁的字組成左表列 {name, amt, unit}，依 y 鄰近分群
+        function _unitLines(items) {
+            const ws = items.map(it => ({ x: it.transform[4], y: it.transform[5], s: it.str }))
+                .filter(w => w.s.trim() !== '').sort((a, b) => b.y - a.y);
+            const rows = [];
+            for (const w of ws) {
+                let r = rows[rows.length - 1];
+                if (!r || Math.abs(r._y - w.y) > 6) { r = { _y: w.y, name: [], amt: '', unit: [] }; rows.push(r); }
+                if (w.x < 160) r.name.push([w.x, w.s]);
+                else if (w.x >= 200 && w.x < 292 && _unitNum.test(w.s)) {
+                    const m = w.s.match(_unitNum); r.amt += m[0];
+                    const rest = w.s.slice(m[0].length); if (rest) r.unit.push([w.x, rest]);
+                } else if (w.x >= 292 && w.x < 360) r.unit.push([w.x, w.s]);
+            }
+            return rows.map(r => ({
+                name: r.name.sort((a, b) => a[0] - b[0]).map(a => a[1]).join(''),
+                amt: r.amt,
+                unit: r.unit.sort((a, b) => a[0] - b[0]).map(a => a[1]).join(''),
+            }));
+        }
+
+        async function parseUnitPlanPdf() {
+            const el = { st: document.getElementById('statusMessageU'), er: document.getElementById('errorOutputU'), cont: document.getElementById('tableContainerU') };
+            const show = (e, t) => { el.st.style.display = 'none'; el.er.style.display = 'none'; e.textContent = t; e.style.display = 'block'; };
+            const files = document.getElementById('fileInputU').files;
+            if (!files || !files.length) { show(el.er, '請先選擇 PDF 檔案！'); return; }
+            document.getElementById('extractBtnU').disabled = true;
+            document.getElementById('exportBtnU').style.display = 'none';
+            try {
+                const data = new Uint8Array(await files[0].arrayBuffer());
+                const pdf = await pdfjsLib.getDocument({ data }).promise;
+                const out = [];
+                let plan = null, ctx = { branch: null, l1: null };
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    show(el.st, `正在處理第 ${i} / ${pdf.numPages} 頁...`);
+                    const page = await pdf.getPage(i);
+                    const tc = await page.getTextContent();
+                    const text = tc.items.map(it => it.str).join('');
+                    if (!text.includes(_UNIT_TITLE)) continue;
+                    const hm = text.match(/計畫名稱及編號\s*(\d{6,})\s*(.+?)\s*預算金額\s*([\d,]+)/);
+                    if (hm && (!plan || plan.code !== hm[1])) { plan = { code: hm[1], name: hm[2].trim(), budget: hm[3] }; ctx = { branch: null, l1: null }; }
+                    if (!plan) continue;
+                    for (const ln of _unitLines(tc.items)) {
+                        if (!ln.amt) continue;
+                        const m = ln.name.match(/^(\d{2,4})\s*(.+)$/);
+                        if (!m) continue;
+                        const code = m[1], cname = m[2].trim();
+                        let level, l1c = '', l1n = '', l2c = '', l2n = '', unit = '';
+                        if (code.length === 2) { ctx = { branch: { code, name: cname }, l1: null }; level = '分支計畫'; unit = ln.unit; }
+                        else if (code.length === 4 && code.endsWith('000')) { ctx.l1 = { code, name: cname }; level = '用途別一級'; l1c = code; l1n = cname; }
+                        else if (code.length === 4) { level = '用途別二級'; l1c = ctx.l1 ? ctx.l1.code : ''; l1n = ctx.l1 ? ctx.l1.name : ''; l2c = code; l2n = cname; }
+                        else continue;
+                        const b = ctx.branch || { code: '', name: '' };
+                        out.push({ planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: b.code, branchName: b.name, l1Code: l1c, l1Name: l1n, l2Code: l2c, l2Name: l2n, level, amount: ln.amt.replace(/,/g, ''), unit });
+                    }
+                }
+                _unitRows = out;
+                if (!out.length) { show(el.er, '找不到「歲出計畫提要及分支計畫概況表」，請確認檔案。'); document.getElementById('extractBtnU').disabled = false; return; }
+                _renderUnitPlan(out);
+                const nplan = new Set(out.map(r => r.planCode)).size;
+                show(el.st, `解析完成：${nplan} 個工作計畫、${out.length} 列。`);
+                document.getElementById('exportBtnU').style.display = 'inline-block';
+            } catch (e) { show(el.er, '解析失敗：' + e.message); console.error(e); }
+            document.getElementById('extractBtnU').disabled = false;
+        }
+
+        function _renderUnitPlan(rows) {
+            // 對帳：二級→一級、一級→分支、分支→工作計畫
+            const l2s = {}, l1a = {}, brs = {}, bra = {}, pls = {}, plb = {};
+            for (const r of rows) {
+                const a = +r.amount; plb[r.planCode] = +r.planBudget.replace(/,/g, '');
+                const bk = r.planCode + '|' + r.branchCode, lk = bk + '|' + r.l1Code;
+                if (r.level === '分支計畫') { bra[bk] = a; pls[r.planCode] = (pls[r.planCode] || 0) + a; }
+                else if (r.level === '用途別一級') { l1a[lk] = a; brs[bk] = (brs[bk] || 0) + a; }
+                else { l2s[lk] = (l2s[lk] || 0) + a; }
+            }
+            const bad = r => {
+                const bk = r.planCode + '|' + r.branchCode, lk = bk + '|' + r.l1Code;
+                if (r.level === '用途別一級') return l2s[lk] !== undefined && l2s[lk] !== l1a[lk];
+                if (r.level === '分支計畫') return brs[bk] !== undefined && brs[bk] !== bra[bk];
+                return false;
+            };
+            const fmt = n => (+n).toLocaleString('en-US');
+            const cls = { '分支計畫': 'up-branch', '用途別一級': 'up-l1', '用途別二級': 'up-l2' };
+            let lastPlan = null, body = '';
+            for (const r of rows) {
+                if (r.planCode !== lastPlan) {
+                    lastPlan = r.planCode;
+                    body += `<tr class="up-plan"><td>${escapeHtml(r.planCode)}</td><td colspan="2">${escapeHtml(r.planName)}</td><td class="up-amt">${fmt(r.planBudget.replace(/,/g, ''))}</td><td></td></tr>`;
+                }
+                const code = r.level === '分支計畫' ? r.branchCode : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
+                const name = r.level === '分支計畫' ? r.branchName : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
+                const pad = r.level === '用途別二級' ? 'padding-left:3em;' : (r.level === '用途別一級' ? 'padding-left:1.6em;' : 'padding-left:.4em;');
+                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td style="white-space:pre-wrap;">${escapeHtml(r.unit || '')}</td></tr>`;
+            }
+            document.getElementById('tableContainerU').innerHTML =
+                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫</th><th>代碼</th><th style="min-width:220px;">分支計畫／用途別科目</th><th>金額</th><th>承辦單位</th></tr></thead><tbody>${body}</tbody></table></div>`;
+        }
+
+        function exportUnitPlanXlsx() {
+            if (!_unitRows.length) return;
+            const head = ['工作計畫代碼', '工作計畫名稱', '工作計畫預算', '分支計畫代碼', '分支計畫名稱', '用途別一級代碼', '用途別一級名稱', '用途別二級代碼', '用途別二級名稱', '層級', '金額', '承辦單位'];
+            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.planBudget.replace(/,/g, ''), r.branchCode, r.branchName, r.l1Code, r.l1Name, r.l2Code, r.l2Name, r.level, +r.amount, r.unit])];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '歲出計畫概況表');
+            XLSX.writeFile(wb, '歲出計畫提要及分支計畫概況表.xlsx');
+        }
 
         // ===== 第三個 tab：金額一致性對帳 =====
         // 純抽取「編列說明」章節文字(含 FUND_MARK)，與 extractPdfText 同法(自動抓章節、不含頁碼範圍)
