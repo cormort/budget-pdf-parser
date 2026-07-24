@@ -784,11 +784,13 @@
                 const r = rows[i];
                 if (r.confirmed) continue;
                 let A = null, C = null;
+                // 拆出的子列(derived)是解析器合成、插進文件流的，不可充當順序錨點，
+                // 否則其科目會被套到後續「用途活動句」上，造成同一筆錢重複計入。
                 for (let k = i - 1; k >= 0 && rows[k].plan === r.plan; k--) {
-                    if (rows[k].confirmed) { A = rows[k].code; break; }
+                    if (rows[k].confirmed && !rows[k].derived) { A = rows[k].code; break; }
                 }
                 for (let k = i + 1; k < rows.length && rows[k].plan === r.plan; k++) {
-                    if (rows[k].confirmed) { C = rows[k].code; break; }
+                    if (rows[k].confirmed && !rows[k].derived) { C = rows[k].code; break; }
                 }
                 if (A && C && A === C) {                       // (1) 確定就是 A
                     [r.l1Item, r.l2Item, r.l3Item] = _namesOf(A);
