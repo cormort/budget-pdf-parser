@@ -1698,7 +1698,10 @@
                 ${amtCols.map(c => `<td class="d-amt">${fmt(r.amounts[c])}</td>`).join('')}
                 ${comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(diffs[i][c.key])}</td>`).join('')}</tr>`; };
             const selfCheck = opts.merged ? '' : _selfCheckHtml(data, amtCols, opts.unit);
-            cont.innerHTML = srcHTML + selfCheck + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
+            // L1 小計列有 L2 子項時不顯示，避免加總重複
+            const l2Keys = new Set(data.filter(r => r.level === '科目' && r.l1 && r.l2).map(r => r.fund + '|' + r.plan + '|' + r.l1));
+            const displayData = data.filter(r => !(r.level === '科目' && r.l1 && !r.l2 && l2Keys.has(r.fund + '|' + r.plan + '|' + r.l1)));
+            cont.innerHTML = srcHTML + selfCheck + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${displayData.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
