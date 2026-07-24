@@ -558,7 +558,7 @@ def clean_internal_whitespace(text: str) -> str:
 
 FOOTER_REGEX = re.compile(r"^\s*\d+(-\d+)?\s*$")
 DATE_HEADER_REGEX = re.compile(r"^中華民國\s*\d+\s*年度$")
-PURE_CJK_REGEX = re.compile(r"^[一-鿿]{2,10}$")
+PURE_CJK_REGEX = re.compile(r"^[一-鿿]{2,20}$")  # 20：涵蓋「農產品受進口損害救助基金」等長機關/基金名
 
 
 def strip_page_chrome(text: str) -> str:
@@ -582,6 +582,23 @@ def strip_page_chrome(text: str) -> str:
         if PURE_CJK_REGEX.match(compact) and counts.get(compact, 0) >= 3:
             continue
         out.append(line)
+
+    # 頁首字串有時被抽取進「句子中間」，把科目名切斷
+    # （如 補(協)助政【農產品受進口損害救助基金】府機關(構)）。
+    # 同一組動態偵測到的頁首字串，長度足夠者一併從句中剝除；計畫標題行不動。
+    header_names = [c for c, n in counts.items() if n >= 3 and len(c) >= 8]
+    if header_names:
+        fixed = []
+        for line in out:
+            t = line.strip()
+            if not t or t.endswith("計畫"):
+                fixed.append(line)
+                continue
+            for h in header_names:
+                if h in line and line.replace(" ", "").strip() != h:
+                    line = line.replace(h, "")
+            fixed.append(line)
+        out = fixed
     return "\n".join(out)
 
 

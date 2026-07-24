@@ -355,7 +355,7 @@
             const lines = text.split('\n');
             const pageRegex = /^[\s　]*[0-9０-９]+(?:[-－‐–—][0-9０-９]+)?[\s　]*$/;
             const dateHeaderRegex = /^中華民國[\s　]*[0-9０-９]+[\s　]*年度$/;
-            const pureCjkRegex = /^[一-鿿]{2,10}$/;
+            const pureCjkRegex = /^[一-鿿]{2,20}$/;   // 20：涵蓋「農產品受進口損害救助基金」等長機關/基金名
             // 機關名/基金名等頁首行 = 短純中文行且整份重複出現 >= 3 次，動態偵測不寫死
             const counts = {};
             for (const line of lines) {
@@ -370,8 +370,24 @@
                     || (pureCjkRegex.test(c) && counts[c] >= 3)) { count++; return false; }
                 return true;
             });
-            ui.outputArea.value = filteredLines.join('\n');
-            showMessage(ui.statusMessage, `已去除 ${count} 行頁碼與頁首標題。`);
+            // 頁首字串有時被抽取進「句子中間」，把科目名切斷（如 補(協)助政【基金名】府機關(構)）。
+            // 同一組動態偵測到的頁首字串，長度足夠者一併從句中剝除；計畫標題行與基金標記行不動。
+            const headerNames = Object.keys(counts).filter(c => counts[c] >= 3 && c.length >= 8);
+            let inlineFixed = 0;
+            const cleaned = filteredLines.map(line => {
+                const t = line.trim();
+                if (!t || t.startsWith(FUND_MARK) || t.endsWith('計畫')) return line;
+                let out = line;
+                for (const h of headerNames) {
+                    if (out.includes(h) && out.replace(/[\s　]/g, '') !== h) {
+                        out = out.split(h).join('');
+                        inlineFixed++;
+                    }
+                }
+                return out;
+            });
+            ui.outputArea.value = cleaned.join('\n');
+            showMessage(ui.statusMessage, `已去除 ${count} 行頁碼與頁首標題${inlineFixed ? `，並修復 ${inlineFixed} 處句中頁首插入` : ''}。`);
         }
 
         function autoClean() {
