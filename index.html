@@ -1299,6 +1299,15 @@
 
             const nn = _normalize(clean || name);
             if (nn.length >= 2) {
+                // 數字明細表的名稱欄常被欄寬截斷（如「補貼、獎勵、慰問、照護」缺「與救濟」）。
+                // 必須先補全為「以此為前綴」的科目，否則會被下方別名規則誤導：
+                // ^補貼 會把截斷的二級 74 對到三級 74Y，該列在對帳時即被當三級跳過而整筆消失。
+                let best = null;
+                for (const item of _chart) {          // _chart 由長到短，取最短的完成式
+                    if (item.norm.length > nn.length && item.norm.startsWith(nn)) best = item;
+                }
+                if (best) return { code: best.code, name: best.name, rest: '' };
+
                 const alias = _aliasAccount(nn);
                 if (alias) return alias;
 
