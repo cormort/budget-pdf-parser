@@ -72,6 +72,7 @@
         #unitTable .up-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; }
         #unitTable .up-plan td { background: #eef4fb; font-weight: 700; }
         #unitTable .up-branch td { background: #f6f8fa; font-weight: 600; }
+        #unitTable .up-total td { background: #0056b3; color: #fff; font-weight: 700; position: sticky; top: 34px; z-index: 1; }
         #unitTable .up-desc { white-space: normal; line-height: 1.5; font-weight: normal; max-width: 560px; }
         #unitTable .narr-un { background: #fff3cd; }  /* 未對應到任何科目的句子 */
         .tab-pane { display: none; }
@@ -1162,6 +1163,7 @@
                 }
                 _finalizeBranch(br);
                 _unitRows = out;
+                _unitFilter.plan = _unitFilter.branch = _unitFilter.l1 = _unitFilter.l2 = '';
                 if (!out.length) { show(el.er, '找不到「歲出計畫提要及分支計畫概況表」，請確認檔案。'); document.getElementById('extractBtnU').disabled = false; return; }
                 _renderUnitPlan(out);
                 const nplan = new Set(out.map(r => r.planCode)).size;
@@ -1171,8 +1173,12 @@
             document.getElementById('extractBtnU').disabled = false;
         }
 
+        const _unitFilter = { plan: '', branch: '', l1: '', l2: '' };
+        function _onUnitFilter(k, v) { _unitFilter[k] = v; _renderUnitPlan(_unitRows); }
+
         function _renderUnitPlan(rows) {
-            // 對帳：二級→一級、一級→分支、分支→工作計畫
+            const fmt = n => (+n).toLocaleString('en-US');
+            // 上下合計驗算：二級→一級、一級→分支、分支→工作計畫（用完整資料建表，篩選不影響驗算）
             const l2s = {}, l1a = {}, brs = {}, bra = {}, pls = {}, plb = {};
             for (const r of rows) {
                 const a = +r.amount; plb[r.planCode] = +r.planBudget.replace(/,/g, '');
@@ -1187,33 +1193,58 @@
                 if (r.level === '分支計畫') return brs[bk] !== undefined && brs[bk] !== bra[bk];
                 return false;
             };
-            const fmt = n => (+n).toLocaleString('en-US');
+            const badCount = rows.filter(bad).length
+                + Object.keys(plb).filter(p => pls[p] !== undefined && pls[p] !== plb[p]).length;
+            const reconLine = badCount === 0
+                ? `<div style="margin:8px 0;color:#155724;">✅ 上下合計驗算全數通過（二級→一級→分支→工作計畫）</div>`
+                : `<div style="margin:8px 0;color:#dc3545;font-weight:600;">⚠ 上下合計驗算有 ${badCount} 處不符，已於該列金額標紅</div>`;
+
+            // 下拉選項
+            const distinct = (pick, vf, tf) => { const m = new Map(); for (const r of rows) if (pick(r) && !m.has(vf(r))) m.set(vf(r), tf(r)); return [...m].map(([v, t]) => ({ v, t })); };
+            const planOpts = distinct(r => r.planCode, r => r.planCode, r => `${r.planCode} ${r.planName}`);
+            const brOpts = distinct(r => r.branchCode, r => r.branchName, r => r.branchName);
+            const l1Opts = distinct(r => r.l1Code, r => r.l1Code, r => `${r.l1Code} ${r.l1Name}`);
+            const l2Opts = distinct(r => r.l2Code, r => r.l2Code, r => `${r.l2Code} ${r.l2Name}`);
+            const F = _unitFilter;
+            const selHTML = (k, label, opts, cur) => `<label style="margin-right:14px;white-space:nowrap;">${label}：<select onchange="_onUnitFilter('${k}',this.value)" style="padding:6px;border:1px solid #ccc;border-radius:4px;max-width:260px;"><option value="">全部</option>${opts.map(o => `<option value="${escapeHtml(o.v)}"${o.v === cur ? ' selected' : ''}>${escapeHtml(o.t)}</option>`).join('')}</select></label>`;
+            const clearHTML = (F.plan || F.branch || F.l1 || F.l2) ? `<button class="btn-secondary" onclick="_onUnitFilter('plan','');" title="清除全部條件" style="padding:6px 12px;">清除</button>` : '';
+            const filterHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px 0;align-items:center;margin:10px 0;">${selHTML('plan', '工作計畫', planOpts, F.plan)}${selHTML('branch', '分支計畫', brOpts, F.branch)}${selHTML('l1', '一級科目', l1Opts, F.l1)}${selHTML('l2', '二級科目', l2Opts, F.l2)}${clearHTML}</div>`;
+
+            // 篩選
+            const pass = r => (!F.plan || r.planCode === F.plan) && (!F.branch || r.branchName === F.branch) && (!F.l1 || r.l1Code === F.l1) && (!F.l2 || r.l2Code === F.l2);
+            const view = rows.filter(pass);
+            // 合計：以篩選結果的二級科目（葉節點）加總，避免上下層重複相加
+            const leaves = view.filter(r => r.level === '用途別二級');
+            const total = (leaves.length ? leaves : view).reduce((s, r) => s + +r.amount, 0);
+            const totalRow = `<tr class="up-total"><td colspan="6">合計（目前篩選：${leaves.length ? leaves.length + ' 筆二級科目' : view.length + ' 筆'}）</td><td class="up-amt">${fmt(total)}</td><td></td></tr>`;
+
             const cls = { '分支計畫': 'up-branch', '用途別一級': 'up-l1', '用途別二級': 'up-l2' };
-            // 分支說明：完整原文依序拼回，未認領的句子加黃底（句子本身不刪、不斷）
             const branchDesc = r => (r.descFrags || []).map(f => f.matched ? escapeHtml(f.t) : `<span class="narr-un">${escapeHtml(f.t)}</span>`).join('');
-            let lastPlan = null, body = '';
-            for (const r of rows) {
-                if (r.planCode !== lastPlan) {
-                    lastPlan = r.planCode;
-                    body += `<tr class="up-plan"><td>${escapeHtml(r.planCode)}</td><td colspan="2">${escapeHtml(r.planName)}</td><td class="up-amt">${fmt(r.planBudget.replace(/,/g, ''))}</td><td></td></tr>`;
-                }
-                const code = r.level === '分支計畫' ? r.branchCode : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
-                const name = r.level === '分支計畫' ? r.branchName : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
-                const pad = r.level === '用途別二級' ? 'padding-left:3em;' : (r.level === '用途別一級' ? 'padding-left:1.6em;' : 'padding-left:.4em;');
+            let body = '';
+            for (const r of view) {
+                const acctCode = r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
+                const acctName = r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
                 const desc = r.level === '分支計畫' ? branchDesc(r) : escapeHtml(r.desc || '');
                 const descCls = 'up-desc' + (r.inferred ? ' narr-un' : '');
                 const descTitle = r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '';
-                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td class="${descCls}"${descTitle}>${desc}</td></tr>`;
+                body += `<tr class="${cls[r.level]}">`
+                    + `<td style="white-space:nowrap;">${escapeHtml(r.planCode)}</td><td>${escapeHtml(r.planName)}</td>`
+                    + `<td style="white-space:nowrap;">${escapeHtml(r.branchCode)}</td><td>${escapeHtml(r.branchName)}</td>`
+                    + `<td style="white-space:nowrap;">${escapeHtml(acctCode)}</td><td>${escapeHtml(acctName)}</td>`
+                    + `<td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td>`
+                    + `<td class="${descCls}"${descTitle}>${desc}</td></tr>`;
             }
-            document.getElementById('tableContainerU').innerHTML =
-                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫</th><th>代碼</th><th style="min-width:220px;">分支計畫／用途別科目</th><th>金額</th><th style="min-width:360px;">說明（分支列＝全文，科目列＝金額對齊句；黃底＝未對應到科目）</th></tr></thead><tbody>${body}</tbody></table></div>`;
+            document.getElementById('tableContainerU').innerHTML = filterHTML + reconLine +
+                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（分支列＝全文，科目列＝金額對齊句；黃底＝未對應到科目）</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
         }
 
         function exportUnitPlanXlsx() {
             if (!_unitRows.length) return;
-            const head = ['工作計畫代碼', '工作計畫名稱', '工作計畫預算', '分支計畫代碼', '分支計畫名稱', '用途別一級代碼', '用途別一級名稱', '用途別二級代碼', '用途別二級名稱', '層級', '金額', '說明'];
+            const head = ['工作計畫編號', '工作計畫', '分支計畫編號', '分支計畫', '用途別科目代碼', '用途別科目', '金額', '編列說明'];
             const desc = r => r.level === '分支計畫' ? (r.descFrags || []).map(f => f.t).join('') : (r.desc || '');
-            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.planBudget.replace(/,/g, ''), r.branchCode, r.branchName, r.l1Code, r.l1Name, r.l2Code, r.l2Name, r.level, +r.amount, desc(r)])];
+            const acctC = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
+            const acctN = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
+            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.branchCode, r.branchName, acctC(r), acctN(r), +r.amount, desc(r)])];
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '歲出計畫概況表');
             XLSX.writeFile(wb, '歲出計畫提要及分支計畫概況表.xlsx');
