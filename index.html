@@ -1060,10 +1060,11 @@
             for (const w of ws) {
                 let r = rows[rows.length - 1];
                 if (!r || Math.abs(r._y - w.y) > 6) { r = { _y: w.y, name: [], amt: '', unit: [] }; rows.push(r); }
+                const s = w.s.trim();  // pdf.js 常把整段（含前導全形空白）併成一個 item
                 if (w.x < 160) r.name.push([w.x, w.s]);
-                else if (w.x >= 200 && w.x < 292 && _unitNum.test(w.s)) {
-                    const m = w.s.match(_unitNum); r.amt += m[0];
-                    const rest = w.s.slice(m[0].length); if (rest) r.unit.push([w.x, rest]);
+                else if (w.x >= 200 && w.x < 292 && _unitNum.test(s)) {
+                    const m = s.match(_unitNum); r.amt += m[0];
+                    const rest = s.slice(m[0].length); if (rest) r.unit.push([w.x, rest]);
                 } else if (w.x >= 292 && w.x < 360) r.unit.push([w.x, w.s]);
             }
             return rows.map(r => ({
@@ -1089,14 +1090,15 @@
                     show(el.st, `正在處理第 ${i} / ${pdf.numPages} 頁...`);
                     const page = await pdf.getPage(i);
                     const tc = await page.getTextContent();
-                    const text = tc.items.map(it => it.str).join('');
-                    if (!text.includes(_UNIT_TITLE)) continue;
-                    const hm = text.match(/計畫名稱及編號\s*(\d{6,})\s*(.+?)\s*預算金額\s*([\d,]+)/);
-                    if (hm && (!plan || plan.code !== hm[1])) { plan = { code: hm[1], name: hm[2].trim(), budget: hm[3] }; ctx = { branch: null, l1: null }; }
+                    const flat = tc.items.map(it => it.str).join('').replace(/[\s　]/g, '');
+                    if (!flat.includes(_UNIT_TITLE)) continue;
+                    // pdf.js 的字序與 pdfplumber 不同：表頭以「預算金額<金額><10碼><名稱>工作計畫名稱及編號」順序出現
+                    const hm = flat.match(/預算金額([\d,]+?)(\d{10})([^\d]+?)工作計畫名稱及編號/);
+                    if (hm && (!plan || plan.code !== hm[2])) { plan = { code: hm[2], name: hm[3], budget: hm[1] }; ctx = { branch: null, l1: null }; }
                     if (!plan) continue;
                     for (const ln of _unitLines(tc.items)) {
                         if (!ln.amt) continue;
-                        const m = ln.name.match(/^(\d{2,4})\s*(.+)$/);
+                        const m = ln.name.trim().match(/^(\d{2,4})\s*(.+)$/);
                         if (!m) continue;
                         const code = m[1], cname = m[2].trim();
                         let level, l1c = '', l1n = '', l2c = '', l2n = '', unit = '';
