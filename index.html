@@ -1075,13 +1075,13 @@
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
                 ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + r.delta.toLocaleString()}</td>` : '<td></td>'}
              </tr>`;
-            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>說明版金額</th><th>明細版金額</th><th>差額(說明−明細)</th></tr></thead>';
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額</th><th>用途明細表金額</th><th>差額(編列說明−用途明細表)</th></tr></thead>';
             const section = (title, note, list, showDelta) => list.length ? `
                 <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
                 <p class="step-description" style="margin:0 0 8px;">${note}</p>
                 <table class="recon-table">${head}<tbody>${list.map(r => rowH(r, showDelta)).join('')}</tbody></table>` : '';
             const onlyH = onlyOne.length ? `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#b8860b;">🟡 僅一節出現（${onlyOne.length}）— 多為計畫階層命名不一致或粒度差異，優先度低</summary>
-                 <p class="step-description" style="margin:6px 0;">只有一節有此科目。「僅明細版有」多為正常(說明未描述)；「僅說明版有」較需留意。計畫層級比對時此類偏多，屬命名對不齊的雜訊。</p>
+                 <p class="step-description" style="margin:6px 0;">只有一節有此科目。「僅用途明細表有」多為正常(編列說明未描述)；「僅編列說明有」較需留意。計畫層級比對時此類偏多，屬命名對不齊的雜訊。</p>
                  <table class="recon-table">${head}<tbody>${onlyOne.map(r => rowH(r, false)).join('')}</tbody></table></details>` : '';
             cont.innerHTML =
                 section('🔴 金額不一致', '兩節皆有此(計畫＋二級科目)、但金額不同——最需優先人工核對(可能是分類差異或漏抓)。', diff, true) +
