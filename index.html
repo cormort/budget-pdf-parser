@@ -476,6 +476,26 @@
         const _cjkNumPrefixRegex = /^\s*[一二三四五六七八九十]+、\s*/;
         // 字母標號（如「B.推動智慧科技…247,800千元。」）＝更深一層的明細項（農村再生基金用法）
         const _letterPrefixRegex = /^\s*[A-Za-z][\.、]\s*/;
+        // 句中「科目名＋N千元」配對，用於拆解內嵌於標題句的明細
+        const _inlinePairRegex = /([一-鿿（）()]{2,22}?)([\d,]+)\s*千\s*元/g;
+        // 只從字首剝除贅詞/標點；不可用 /^.*?(…|及|、)/，否則會砍到科目名內部的「及」「、」
+        // （如 農業與園藝用品「及」環境美化費、捐助「、」補助與獎助）
+        const _stripLead = (s) => {
+            let prev;
+            do { prev = s; s = s.replace(/^[，,、及和與：:]+/, '').replace(/^(包括|係|編列)/, ''); } while (s !== prev);
+            return s;
+        };
+        // 從標題句抽出可比對到科目表的「科目名＋金額」配對
+        const _inlinePairs = (text) => {
+            const out = [];
+            for (const m of text.matchAll(_inlinePairRegex)) {
+                const acc = _matchAccount(_stripLead(m[1]));
+                if (acc && acc.code.length >= 2) {
+                    out.push({ code: acc.code, amount: parseInt(m[2].replace(/,/g, ''), 10) * 1000, frag: m[0] });
+                }
+            }
+            return out;
+        };
 
         // 預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目
         const _budgetType = (s) => {
@@ -706,7 +726,7 @@
                 }
 
                 const amount = _extractAmount(line);
-                rows.push({
+                const baseRow = {
                     fund: currentFund,
                     plan: [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean).join(' - ') || '未分類計畫',
                     planTop: currentPlanL1 || '未分類計畫',
@@ -721,7 +741,34 @@
                     code: currentCode,                              // 本列科目代碼(沿用時＝上一列)
                     confirmed: !!matched && !matched.inferred,      // 本行以科目名確實比對到(非推論/沿用)
                     accountFilled: !matched || !!matched.inferred   // 科目沿用補上或關鍵字推論 → 標記提示
-                });
+                };
+                rows.push(baseRow);
+
+                // 內嵌明細拆列：標題句中把二/三級科目與金額寫在同一句(如「…－編列1,402,000千元，
+                // 包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」)，本列 l2 為空。
+                // 安全閥：僅當「子項加總 === 母列金額」才拆，對不上就維持原狀，避免捏造或重複計算。
+                if (rowL1 && !rowL2 && amount) {
+                    const pairs = _inlinePairs(line);
+                    if (pairs.length >= 2 && pairs.reduce((s, p) => s + p.amount, 0) === amount) {
+                        baseRow.isSubtotal = true;                  // 母列＝小計，彙總時不重複計入
+                        for (const p of pairs) {
+                            rows.push({
+                                ...baseRow,
+                                l1Item: _codeToName.get(p.code[0]) || rowL1,
+                                l2Item: _codeToName.get(p.code.slice(0, 2)) || '',
+                                l3Item: p.code.length >= 3 ? (_codeToName.get(p.code) || '') : '',
+                                amount: p.amount,
+                                description: p.frag,
+                                raw: p.frag,
+                                code: p.code,
+                                confirmed: true,       // 科目名與金額都是原文明寫
+                                accountFilled: false,
+                                isSubtotal: false,
+                                derived: true          // 由母列拆出
+                            });
+                        }
+                    }
+                }
             }
 
             // 依科目順序後處理(不動主迴圈)：每個孤兒句取同計畫「前確定科目A」「後確定科目C」
@@ -1020,17 +1067,14 @@
                         // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
                         // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
                         // 這類列本身 l2 為空(否則整筆漏算)，逐一抽出科目金額並歸戶到其二級科目。
-                        // 觸發不限「包括/係」句：另有「編列一般房屋租金3,000千元。」這種科目名接在
-                        // 「編列」之後、不在句首的寫法(農村再生基金)，同樣要抽出歸戶。
-                        if (r.l1Item) {
-                            for (const m of r.description.matchAll(/([一-鿿（）()]{2,22}?)([\d,]+)\s*千\s*元/g)) {
-                                const cand = m[1].replace(/^.*?(包括|係|編列|、|及)/, '') || m[1];
-                                const acc = _matchAccount(cand);
-                                if (!acc || acc.code.length < 2) continue;
-                                const l2n = _codeToName.get(acc.code.slice(0, 2));
+                        // 已被解析器拆成子列的母列(isSubtotal)不可再抽，否則與子列重複計入。
+                        // 其餘 l2 為空的列(含未通過安全閥、未拆的)仍就地抽取，如
+                        // 「編列一般房屋租金3,000千元。」這種科目名接在「編列」之後的寫法。
+                        if (r.l1Item && !r.isSubtotal) {
+                            for (const p of _inlinePairs(r.description)) {
+                                const l2n = _codeToName.get(p.code.slice(0, 2));
                                 if (!l2n) continue;
-                                addTo(r.fund, plan, _codeToName.get(acc.code[0]) || r.l1Item, l2n,
-                                      parseInt(m[2].replace(/,/g, ''), 10) * 1000);
+                                addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount);
                             }
                         }
                         curKey = null; blockHasHeader = false; continue;
@@ -1039,6 +1083,10 @@
                     if (k !== curKey) { curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
                     if (!r.amount) continue;
+                    if (r.derived) {                 // 由母列拆出的子列：母列已排除，無條件計入且不影響區塊判斷
+                        nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                        continue;
+                    }
                     if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);
                         blockHasHeader = true;
