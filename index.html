@@ -1464,18 +1464,28 @@
         }
 
         const _HEAD_NAMES = ['業務計畫及用途別科目', '計畫內容說明', '基金用途', '前年度', '本年度', '上年度', '前年度決算數', '本年度預算數', '上年度預算數'];
+        // 名稱是否「剛好」構成一個完整科目（比對到且無中文殘餘）＝ 折行已接完
+        function _isCompleteAccount(name) {
+            const m = _matchAccount(name);
+            return !!m && !_normalize(m.rest);
+        }
+
         function _mergeWrapped(lines, cols, rightCut) {
             // 換行接續行(無金額、非計畫標號、非科目、非表頭)併回上一列名稱，修正長名被截斷
             const items = [];
             for (const line of lines) {
                 const a = _detailAssign(line, cols, rightCut);
                 if (!a.name) continue;
-                // 續行片段的特徵是「不以科目名開頭」，故用嚴格比對 _matchAccount 判定。
-                // 不可用 _matchAccountLoose：它的 includes 迴圈會讓「與交流活動費」命中
-                // 7「會費…救濟與交流活動費」而被誤判成科目列，長名就永遠併不回去。
+                // 續行判定不能問「這行像不像科目」——長名折行後的片段可能剛好以科目名開頭，
+                // 例如「購建固定資產、無形資產、|非理財目的之長期投資及營|舍與設施工程支出」
+                // 中間那段會命中 53「非理財目的之長期投資」。
+                // 可靠的結構訊號是「上一列名稱是否已構成完整科目」：沒完整就繼續吸收，
+                // 完整了就停；同時本行自己若已是完整科目，就不當續行。
+                const prevIncomplete = items.length && !_isCompleteAccount(items[items.length - 1].name);
                 const isCont = Object.keys(a.amounts).length === 0
                     && !_planL1Regex.test(a.name) && !_planL2Regex.test(a.name) && !_planL3Regex.test(a.name)
-                    && !_HEAD_NAMES.includes(a.name) && !_matchAccount(a.name);
+                    && !_HEAD_NAMES.includes(a.name)
+                    && prevIncomplete && !_isCompleteAccount(a.name);
                 if (isCont && items.length) items[items.length - 1].name += a.name;
                 else items.push(a);
             }

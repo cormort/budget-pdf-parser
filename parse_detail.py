@@ -18,6 +18,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from parse_budget import (
+    normalize,
     CODE_TO_NAME,
     SECTION_MARKER,
     match_account,
@@ -140,25 +141,35 @@ def _assign(cells, cols, right_cut):
 _HEAD_NAMES = ("業務計畫及用途別科目", "計畫內容說明", "基金用途")
 
 
+def _is_complete_account(name: str) -> bool:
+    """名稱是否「剛好」構成一個完整科目（比對到且無中文殘餘）＝ 折行已接完。"""
+    m = match_account(name)
+    return bool(m) and not normalize(m["rest"])
+
+
 def _merge_wrapped(rows, cols, right_cut):
     """長名被換行截斷時，續行(無金額、非標號、非科目、非表頭)併回上一列名稱。
 
-    續行片段的特徵是「不以科目名開頭」，故用嚴格的 match_account 判定，
-    例如「與交流活動費」比對不到科目 → 併回上一列，還原成
-    「會費、捐助、補助、分攤、照護、救濟與交流活動費」。
+    續行判定不能問「這行像不像科目」——長名折行後的片段可能剛好以科目名開頭，
+    例如「購建固定資產、無形資產、|非理財目的之長期投資及營|舍與設施工程支出」
+    中間那段會命中 53「非理財目的之長期投資」。
+    可靠的結構訊號是「上一列名稱是否已構成完整科目」：沒完整就繼續吸收，
+    完整了就停；本行自己若已是完整科目，也不當續行。
     """
     items: list[list] = []
     for _top, cells in rows:
         name, amounts = _assign(cells, cols, right_cut)
         if not name:
             continue
+        prev_incomplete = bool(items) and not _is_complete_account(items[-1][0])
         is_cont = (
             not amounts
             and not PLAN_L1.match(name)
             and not PLAN_L2.match(name)
             and not PLAN_L3.match(name)
             and name not in _HEAD_NAMES
-            and not match_account(name)
+            and prev_incomplete
+            and not _is_complete_account(name)
         )
         if is_cont and items:
             items[-1][0] += name
