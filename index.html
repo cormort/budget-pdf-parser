@@ -1657,11 +1657,12 @@
             const comparisons = [];
             if (curBudget && prevBudget) comparisons.push({ key: 'curVsPrevBudget', label: `本年度預算 − 上年度預算`, a: curBudget, b: prevBudget });
             if (curBudget && prevDecal) comparisons.push({ key: 'curVsPrevDecal', label: `本年度預算 − 前年度決算`, a: curBudget, b: prevDecal });
-            // Calculate diff values for each row
-            const diffs = data.map(r => {
+            // Calculate diff values for each row (keyed by row object — data/displayData indices don't align)
+            const diffMap = new Map();
+            data.forEach(r => {
                 const d = {};
                 for (const c of comparisons) d[c.key] = (r.amounts[c.a] ?? null) != null && (r.amounts[c.b] ?? null) != null ? r.amounts[c.a] - r.amounts[c.b] : null;
-                return d;
+                diffMap.set(r, d);
             });
             const comparisonOptions = [
                 { key: 'inc', label: '增加（差異 > 0）' },
@@ -1692,16 +1693,16 @@
                 const hasL = (el('dL1') && el('dL1').value) || (el('dL2') && el('dL2').value) || (el('dL3') && el('dL3').value);
                 return hasL ? r.plan + ' ‧ ' + r.name : r.name;
             };
-            const rowHtml = (r, i) => { const cls = rowLevel(r); return `<tr class="${cls}" data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
+            const rowHtml = (r) => { const cls = rowLevel(r); const rd = diffMap.get(r); return `<tr class="${cls}" data-fund="${escapeHtml(r.fund)}" data-plan="${escapeHtml(r.plan)}" data-level="${r.level}">
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td class="d-name">${escapeHtml(nameCell(r))}</td>
                 ${amtCols.map(c => `<td class="d-amt">${fmt(r.amounts[c])}</td>`).join('')}
-                ${comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(diffs[i][c.key])}</td>`).join('')}</tr>`; };
+                ${comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(rd[c.key])}</td>`).join('')}</tr>`; };
             const selfCheck = opts.merged ? '' : _selfCheckHtml(data, amtCols, opts.unit);
             // L1 小計列有 L2 子項時不顯示，避免加總重複
             const l2Keys = new Set(data.filter(r => r.level === '科目' && r.l1 && r.l2).map(r => r.fund + '|' + r.plan + '|' + r.l1));
             const displayData = data.filter(r => !(r.level === '科目' && r.l1 && !r.l2 && l2Keys.has(r.fund + '|' + r.plan + '|' + r.l1)));
-            cont.innerHTML = srcHTML + selfCheck + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${displayData.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
+            cont.innerHTML = srcHTML + selfCheck + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${displayData.map(r => rowHtml(r)).join('')}</tbody></table></div>`;
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;
@@ -1745,12 +1746,12 @@
                 const oldSum = tbody.querySelector('.d-summary');
                 if (oldSum) oldSum.remove();
                 // Filter data rows
-                const matched = data.filter((d, i) => {
+                const matched = displayData.filter((d) => {
                     let ok = (!f || d.fund === f) && (!p || d.plan === p) && (!lv || d.level === lv)
                         && (!l1 || d.l1 === l1) && (!l2 || d.l2 === l2) && (!l3 || d.l3 === l3);
                     if (ok && diffVal) {
                         const [compKey, cmp] = diffVal.split('_');
-                        const diff = diffs[i][compKey];
+                        const diff = diffMap.get(d)[compKey];
                         const base = d.amounts[comparisons.find(c => c.key === compKey)?.b];
                         if (diff == null) ok = false;
                         else if (cmp === 'inc') ok = diff > 0;
@@ -1777,8 +1778,7 @@
                         const g = groupMap.get(gk);
                         amtCols.forEach(c => { g.amounts[c] = (g.amounts[c] || 0) + (d.amounts[c] ?? 0); });
                         comparisons.forEach(c => {
-                            const idx = data.indexOf(d);
-                            g.diffAmt[c.key] = (g.diffAmt[c.key] || 0) + (diffs[idx][c.key] ?? 0);
+                            g.diffAmt[c.key] = (g.diffAmt[c.key] || 0) + (diffMap.get(d)[c.key] ?? 0);
                         });
                     }
                     // Clear tbody and insert aggregated rows
@@ -1798,19 +1798,14 @@
                         comparisons.forEach(c => { sumDiff[c.key] += g.diffAmt[c.key] ?? 0; });
                     }
                 } else {
-                    // Show individual matching rows
-                    const matchSet = new Set(matched);
-                    for (let i = 0; i < tbody.rows.length; i++) {
-                        const d = data[i];
-                        tbody.rows[i].style.display = matchSet.has(d) ? '' : 'none';
-                    }
+                    // Rebuild body from matched rows (agg branch may have replaced the DOM rows)
+                    tbody.innerHTML = matched.map(r => rowHtml(r)).join('');
                     sumAmt = {}; amtCols.forEach(c => sumAmt[c] = 0);
                     sumDiff = {}; comparisons.forEach(c => sumDiff[c.key] = 0);
                     for (const d of matched) {
                         if (d.level === '科目') {
-                            const idx = data.indexOf(d);
                             amtCols.forEach(c => { sumAmt[c] += d.amounts[c] ?? 0; });
-                            comparisons.forEach(c => { sumDiff[c.key] += diffs[idx][c.key] ?? 0; });
+                            comparisons.forEach(c => { sumDiff[c.key] += diffMap.get(d)[c.key] ?? 0; });
                         }
                     }
                 }
@@ -1824,7 +1819,7 @@
                         + comparisons.map(c => `<td class="d-amt" style="font-weight:bold;">${fmtDiffHtml(sumDiff[c.key])}</td>`).join('');
                     tbody.insertBefore(tr, tbody.firstChild);
                 }
-                el('dCount').textContent = `顯示 ${matched.length} / ${data.length} 列`;
+                el('dCount').textContent = `顯示 ${matched.length} / ${displayData.length} 列`;
             };
 
             selects.forEach(([sel], lvl) => sel.addEventListener('change', () => {
