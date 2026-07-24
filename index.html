@@ -1768,9 +1768,10 @@
                 const aggByPlan = (l1 && !l2 && !l3) || (l2 && !l3);
                 let sumAmt = {}, sumDiff = {};
                 if (aggByPlan) {
-                    // Aggregate: group matching rows by (fund, plan)
+                    // Aggregate: group matching rows by (fund, plan)，排除 L1 小計列避免重複
                     const groupMap = new Map();
                     for (const d of matched) {
+                        if (d.level === '科目' && d.l1 && !d.l2) continue;
                         const gk = d.fund + '|' + d.plan;
                         if (!groupMap.has(gk)) groupMap.set(gk, { fund: d.fund, plan: d.plan, amounts: {}, diffAmt: {} });
                         const g = groupMap.get(gk);
