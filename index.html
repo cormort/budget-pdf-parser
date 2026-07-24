@@ -1112,13 +1112,21 @@
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
                     }
                 }
+                // 明細表有二級小計列時以它為準；但某些分類只列了三級（未給二級小計），
+                // 例如「分攤」底下只有一筆 分擔其他費用1,860千元 ——只取二級列會整筆漏掉，
+                // 使明細側少算。故：有二級列用二級列，沒有才加總其三級列。
+                const dHdr = new Map(), dLeaf = new Map();
                 for (const r of dres.rows) {
                     const amt = r.amounts['本年度預算'];
-                    if (!amt || !r.l2 || r.l3) continue;
+                    if (!amt || !r.l2) continue;
                     const plan = (r.plan || '').split(' - ')[0];
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
-                    dMap.set(k, (dMap.get(k) || 0) + amt * factor);
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
+                    if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
+                    else dLeaf.set(k, (dLeaf.get(k) || 0) + amt * factor);
+                }
+                for (const k of new Set([...dHdr.keys(), ...dLeaf.keys()])) {
+                    dMap.set(k, dHdr.has(k) ? dHdr.get(k) : dLeaf.get(k));
                 }
                 const keys = new Set([...nMap.keys(), ...dMap.keys()]);
                 const diff = [], onlyOne = [], ok = [];

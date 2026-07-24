@@ -68,19 +68,29 @@ def _find_columns(rows):
     for _top, cells in rows[:14]:
         for x0, text in cells:
             pos.setdefault(text.strip(), x0)
-    right_cut = pos.get("計畫內容說明") or pos.get("備註") or pos.get("備") or 9999
+    # 表頭 token 可能是完整詞、拆兩行、或逐字；用多形式尋找欄位錨點（比照 index.html）
+    def px(*keys):
+        for k in keys:
+            if k in pos:
+                return pos[k]
+        return None
+
+    right_cut = px("計畫內容說明", "備註", "備") or 9999
     amount_cols = {}
-    if "前年度" in pos:  # 預算書細表：前年度決算 | 本年度預算 | 上年度預算
-        amount_cols = {
-            "前年度決算": pos["前年度"] + 20,
-            "本年度預算": pos["本年度"] + 20,
-            "上年度預算": pos["上年度"] + 20,
-        }
-    elif "預" in pos and "決" in pos:  # 決算表(表頭字距大被拆字)：預算數 | 決算數
-        amount_cols = {
-            "預算數": pos["預"] + 13,
-            "決算數": pos["決"] + 13,
-        }
+    xf = px("前年度決算數", "前年度", "前")
+    xb = px("本年度預算數", "本年度", "本")
+    xu = px("上年度預算數", "上年度", "上")
+    if xb is not None or xu is not None:  # 預算書細表：前年度決算 | 本年度預算 | 上年度預算
+        if xf is not None:
+            amount_cols["前年度決算"] = xf + 20
+        if xb is not None:
+            amount_cols["本年度預算"] = xb + 20
+        if xu is not None:
+            amount_cols["上年度預算"] = xu + 20
+    else:  # 決算表(表頭字距大被拆字)：預算數 | 決算數
+        xp, xd = px("預算數", "預"), px("決算數", "決")
+        if xp is not None and xd is not None:
+            amount_cols = {"預算數": xp + 13, "決算數": xd + 13}
     return amount_cols, right_cut
 
 
