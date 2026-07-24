@@ -404,7 +404,8 @@
         const _normalize = (str) => str
             .replace(/（[^）]*）/g, '')
             .replace(/\([^)]*\)/g, '')
-            .replace(/[\s、及－\-]/g, '');
+            .replace(/[\s、及－\-]/g, '')
+            .replace(/擔/g, '攤');   // 異體字：明細表印「分擔」、科目表 73 為「分攤」，視為同字
 
         const _walkMatch = (line, normName) => {
             let pos = 0, consumed = 0, depth = 0;
@@ -1536,6 +1537,69 @@
             }
         }
 
+        // 明細表自我檢查：用表格自身的結構約束(小計 = 其下層加總)驗證解析是否完整。
+        // 不依賴另一份資料，能直接抓出「長名折行沒接回」「整列漏解析」這類問題。
+        function _detailSelfCheck(rows, amtCol, tol) {
+            tol = tol == null ? 1 : tol;              // 容許 ±1(千元) 的四捨五入
+            const issues = [];
+            const val = r => { const v = r.amounts ? r.amounts[amtCol] : null; return typeof v === 'number' ? v : null; };
+            const add = (level, p, path, kids) => {
+                const total = val(p);
+                if (total == null || !kids.length) return;
+                const s = kids.reduce((a, x) => a + (val(x) || 0), 0);
+                if (Math.abs(total - s) > tol)
+                    issues.push({ level, fund: p.fund, plan: p.plan, path, total, sum: s, delta: total - s });
+            };
+            // 明細表由上而下排列：一個小計列(母)後面緊接它的下層明細，到下一個同層(或更高層)
+            // 小計為止。逐列掃描、只把緊跟在後的下層列當子項，才不會把不同區段的同名科目混算。
+            const subj = rows.filter(r => r.level === '科目');
+            for (let i = 0; i < subj.length; i++) {
+                const p = subj[i];
+                const isL1 = p.l1 && !p.l2, isL2 = p.l2 && !p.l3;
+                if (!isL1 && !isL2) continue;
+                const kids = [];
+                for (let j = i + 1; j < subj.length; j++) {
+                    const q = subj[j];
+                    if (q.fund !== p.fund || q.plan !== p.plan) break;         // 離開本計畫
+                    if (isL1) {
+                        if (!q.l2 && !q.l3) break;                             // 下一個一級 → 本段結束
+                        if (q.l1 !== p.l1) break;
+                        if (q.l2 && !q.l3) kids.push(q);                       // 二級小計
+                        else if (q.l3 && !kids.some(k => k.l2 === q.l2)) kids.push(q); // 某分類只列三級
+                    } else {                                                  // isL2
+                        if (!q.l3) break;                                     // 非三級 → 本段結束
+                        if (q.l1 !== p.l1 || q.l2 !== p.l2) break;
+                        kids.push(q);
+                    }
+                }
+                if (isL1) add('一級→二級', p, p.l1, kids);
+                else add('二級→三級', p, p.l1 + ' / ' + p.l2, kids);
+            }
+            return issues;
+        }
+
+        function _selfCheckHtml(rows, amtCols, unit) {
+            const amtCol = amtCols.find(c => /本年度預算|預算數/.test(c)) || amtCols[0];
+            if (!amtCol) return '';
+            const issues = _detailSelfCheck(rows, amtCol);
+            const u = unit || '';
+            if (!issues.length) {
+                return `<details style="margin:10px 0;padding:10px;border:1px solid #c3e6cb;background:#f4fbf6;border-radius:4px;">
+                    <summary style="color:#155724;cursor:pointer;">✅ 表格自我檢查通過（依「${escapeHtml(amtCol)}」逐層核對小計與下層加總，無不符）</summary>
+                    <p class="step-description" style="margin:8px 0 0;">檢查層級：計畫→一級、一級→二級、二級→三級；容許 ±1${escapeHtml(u)} 的四捨五入。</p></details>`;
+            }
+            issues.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+            const tr = i => `<tr><td style="white-space:nowrap;">${escapeHtml(i.level)}</td><td style="white-space:nowrap;">${escapeHtml(i.fund)}</td>
+                <td>${escapeHtml(i.plan)}</td><td>${escapeHtml(i.path)}</td>
+                <td style="text-align:right;white-space:nowrap;">${i.total.toLocaleString()}</td>
+                <td style="text-align:right;white-space:nowrap;">${i.sum.toLocaleString()}</td>
+                <td style="text-align:right;white-space:nowrap;" class="${i.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(i.delta > 0 ? '+' : '') + i.delta.toLocaleString()}</td></tr>`;
+            return `<details open style="margin:10px 0;padding:10px;border:1px solid #f5c6cb;background:#fdf2f3;border-radius:4px;">
+                <summary style="color:#721c24;cursor:pointer;">⚠️ 表格自我檢查：${issues.length} 處小計與下層加總不符（點擊展開）</summary>
+                <p class="step-description" style="margin:8px 0;">依「${escapeHtml(amtCol)}」核對。此檢查不依賴其他資料，<strong>不符多半代表本表有列沒被正確解析</strong>（例如長科目名折行沒接回、整列漏抓），而非預算書本身有誤。容許 ±1${escapeHtml(u)} 四捨五入。</p>
+                <div style="overflow-x:auto;"><table><thead><tr><th>層級</th><th>基金</th><th>計畫</th><th>科目</th><th>小計</th><th>下層加總</th><th>差額</th></tr></thead><tbody>${issues.map(tr).join('')}</tbody></table></div></details>`;
+        }
+
         function displayDetailTable(data, amtCols, opts) {
             opts = opts || {};
             const cont = document.getElementById('tableContainerD');
@@ -1600,7 +1664,8 @@
                 <td class="d-name">${escapeHtml(nameCell(r))}</td>
                 ${amtCols.map(c => `<td class="d-amt">${fmt(r.amounts[c])}</td>`).join('')}
                 ${comparisons.map(c => `<td class="d-amt">${fmtDiffHtml(diffs[i][c.key])}</td>`).join('')}</tr>`; };
-            cont.innerHTML = srcHTML + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
+            const selfCheck = opts.merged ? '' : _selfCheckHtml(data, amtCols, opts.unit);
+            cont.innerHTML = srcHTML + selfCheck + filterHTML + `<div class="d-table-wrap"><table id="dTable"><thead><tr>${th}</tr></thead><tbody>${data.map((r, i) => rowHtml(r, i)).join('')}</tbody></table></div>`;
             if (el('dSource')) el('dSource').addEventListener('change', e => showDetailSource(parseInt(e.target.value, 10)));
             if (el('dMerge')) el('dMerge').addEventListener('change', e => { _detailView = e.target.checked ? { merged: true } : { merged: false, idx: 0 }; renderDetail(); });
             const rows = el('dTable').tBodies[0].rows;

@@ -317,6 +317,7 @@ def normalize(s: str) -> str:
     s = re.sub(r"（[^）]*）", "", s)
     s = re.sub(r"\([^)]*\)", "", s)
     s = re.sub(r"[\s、及－\-]", "", s)
+    s = s.replace("擔", "攤")  # 異體字：明細表印「分擔」、科目表 73 為「分攤」，視為同字
     return s
 
 
