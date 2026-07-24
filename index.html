@@ -1143,6 +1143,7 @@
                 const pdf = await pdfjsLib.getDocument({ data }).promise;
                 const out = [];
                 let plan = null, ctx = { l1: null }, br = null;
+                const closedPlans = new Set();  // 已結案工作計畫；再出現＝進入附錄重複區
                 for (let i = 1; i <= pdf.numPages; i++) {
                     show(el.st, `正在處理第 ${i} / ${pdf.numPages} 頁...`);
                     const page = await pdf.getPage(i);
@@ -1151,7 +1152,12 @@
                     if (!flat.includes(_UNIT_TITLE)) continue;
                     // pdf.js 的字序與 pdfplumber 不同：表頭以「預算金額<金額><10碼><名稱>工作計畫名稱及編號」順序出現
                     const hm = flat.match(/預算金額([\d,]+?)(\d{10})([^\d]+?)工作計畫名稱及編號/);
-                    if (hm && (!plan || plan.code !== hm[2])) { _finalizeBranch(br); br = null; plan = { code: hm[2], name: hm[3], budget: hm[1] }; ctx = { l1: null }; }
+                    if (hm && (!plan || plan.code !== hm[2])) {
+                        if (closedPlans.has(hm[2])) break;   // 已結案的工作計畫又出現 → 附錄重複，停止解析
+                        _finalizeBranch(br); br = null;
+                        if (plan) closedPlans.add(plan.code);
+                        plan = { code: hm[2], name: hm[3], budget: hm[1] }; ctx = { l1: null };
+                    }
                     if (!plan) continue;
                     for (const ln of _unitLines(tc.items)) {
                         const m = ln.name.trim().match(/^(\d{2,4})\s*(.+)$/);
