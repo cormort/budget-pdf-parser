@@ -474,6 +474,8 @@
         const _parenPrefixRegex = /^\s*\((\d+|[一二三四五六七八九十]+)\)\s*/;
         // 中文數字＋頓號當條列前綴（如「四、其他專業服務費27,400千元」＝科目明細，非計畫）
         const _cjkNumPrefixRegex = /^\s*[一二三四五六七八九十]+、\s*/;
+        // 字母標號（如「B.推動智慧科技…247,800千元。」）＝更深一層的明細項（農村再生基金用法）
+        const _letterPrefixRegex = /^\s*[A-Za-z][\.、]\s*/;
 
         // 預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目
         const _budgetType = (s) => {
@@ -583,13 +585,17 @@
                     else {
                         pm = line.match(_cjkNumPrefixRegex);   // 「四、其他專業服務費…」非計畫時的科目明細
                         if (pm) { work = line.substring(pm[0].length); prefixKind = 'number'; }
+                        else {
+                            pm = line.match(_letterPrefixRegex);   // 「B.推動智慧科技…」更深一層明細
+                            if (pm) { work = line.substring(pm[0].length); prefixKind = 'paren'; }
+                        }
                     }
                 }
 
                 let levelPref;
                 if (prefixKind === 'none') levelPref = [1, 2, 3];
                 else if (prefixKind === 'number') levelPref = [2, 3];
-                else levelPref = [3];
+                else levelPref = [3, 2];   // (1) 標號多為三級，但農村再生用它標二級科目，故退而求其次也試二級
 
                 let matched = null;
                 for (const lvl of levelPref) {

@@ -603,6 +603,8 @@ NUMBER_PREFIX_REGEX = re.compile(r"^\s*(\d+)\.\s*")
 PAREN_PREFIX_LINE_REGEX = re.compile(r"^\s*\((\d+|[一二三四五六七八九十]+)\)\s*")
 # 中文數字＋頓號當條列前綴（「四、其他專業服務費…」＝科目明細，非計畫）
 CJK_NUM_PREFIX_REGEX = re.compile(r"^\s*[一二三四五六七八九十]+、\s*")
+# 字母標號（「B.推動智慧科技…247,800千元。」）＝更深一層的明細項（農村再生基金用法）
+LETTER_PREFIX_REGEX = re.compile(r"^\s*[A-Za-z][\.、]\s*")
 CALC_NOTE_REGEX = re.compile(r"[=＝+＋\[\]％%]")
 
 
@@ -698,13 +700,19 @@ def parse(text: str, fund: str = ""):
                 if m:
                     work = line[m.end():]
                     prefix_kind = "number"
+                else:
+                    m = LETTER_PREFIX_REGEX.match(line)   # 「B.推動智慧科技…」更深一層明細
+                    if m:
+                        work = line[m.end():]
+                        prefix_kind = "paren"
 
         if prefix_kind == "none":
             level_pref = [1, 2, 3]
         elif prefix_kind == "number":
             level_pref = [2, 3]
         else:
-            level_pref = [3]
+            # (1) 標號多為三級，但農村再生用它標二級科目，故退而求其次也試二級
+            level_pref = [3, 2]
 
         matched = None
         for lvl in level_pref:
