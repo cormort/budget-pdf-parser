@@ -1093,14 +1093,31 @@
             const cnt = {};
             for (const c of br.codeRows) cnt[c.amount] = (cnt[c.amount] || 0) + 1;
             const claimed = new Set();
+            // 第一輪：金額對齊（事實）
             for (const c of br.codeRows) {
                 if (cnt[c.amount] > 1) continue;               // 同金額多科目 → 留白
                 const re = new RegExp('(?<![\\d,])' + _unitFmt(c.amount) + '千元');  // 邊界，避免 4千元 命中 64千元
-                const hits = frags.filter(f => re.test(f));
+                const hits = [];
+                frags.forEach((f, i) => { if (re.test(f)) hits.push(i); });
                 if (hits.length !== 1) continue;               // 多句/零句 → 留白
-                c.desc = hits[0]; claimed.add(hits[0]);
+                c.descIdx = hits[0]; c.desc = frags[hits[0]]; claimed.add(hits[0]);
             }
-            br.row.descFrags = frags.map(f => ({ t: f, matched: claimed.has(f) }));
+            // 第二輪：順序界限（推論）。被前後已對到的科目夾住、且中間未認領句數==中間未對到科目數 → 1:1 依序指派
+            const cr = br.codeRows;
+            for (let i = 0; i < cr.length;) {
+                if (cr[i].descIdx != null) { i++; continue; }
+                let j = i; while (j < cr.length && cr[j].descIdx == null) j++;
+                const prev = i > 0 ? cr[i - 1].descIdx : null, next = j < cr.length ? cr[j].descIdx : null;
+                if (prev != null && next != null) {
+                    const gap = [];
+                    for (let k = prev + 1; k < next; k++) if (!claimed.has(k)) gap.push(k);
+                    if (gap.length === j - i) {                // 數量吻合才指派，否則留白（不臆測中間是哪個）
+                        for (let t = 0; t < gap.length; t++) { cr[i + t].descIdx = gap[t]; cr[i + t].desc = frags[gap[t]]; cr[i + t].inferred = true; claimed.add(gap[t]); }
+                    }
+                }
+                i = j;
+            }
+            br.row.descFrags = frags.map((f, idx) => ({ t: f, matched: claimed.has(idx) }));
         }
 
         async function parseUnitPlanPdf() {
@@ -1184,7 +1201,9 @@
                 const name = r.level === '分支計畫' ? r.branchName : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
                 const pad = r.level === '用途別二級' ? 'padding-left:3em;' : (r.level === '用途別一級' ? 'padding-left:1.6em;' : 'padding-left:.4em;');
                 const desc = r.level === '分支計畫' ? branchDesc(r) : escapeHtml(r.desc || '');
-                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td class="up-desc">${desc}</td></tr>`;
+                const descCls = 'up-desc' + (r.inferred ? ' narr-un' : '');
+                const descTitle = r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '';
+                body += `<tr class="${cls[r.level]}"><td></td><td style="white-space:nowrap;">${escapeHtml(code)}</td><td style="${pad}">${escapeHtml(name)}</td><td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td><td class="${descCls}"${descTitle}>${desc}</td></tr>`;
             }
             document.getElementById('tableContainerU').innerHTML =
                 `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫</th><th>代碼</th><th style="min-width:220px;">分支計畫／用途別科目</th><th>金額</th><th style="min-width:360px;">說明（分支列＝全文，科目列＝金額對齊句；黃底＝未對應到科目）</th></tr></thead><tbody>${body}</tbody></table></div>`;
