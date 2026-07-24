@@ -185,7 +185,11 @@
                     <input type="file" id="fileInputU" accept=".pdf">
                     <span id="fileNameDisplayU">尚未選擇檔案</span>
                     <button id="extractBtnU" class="btn-main" onclick="parseUnitPlanPdf()">解析</button>
-                    <button id="exportBtnU" class="btn-success" style="display:none;" onclick="exportUnitPlanXlsx()">匯出 xlsx</button>
+                    <span id="exportBtnU" style="display:none;">
+                        <button class="btn-success" onclick="exportUnit('xlsx')" title="匯出目前查詢結果">匯出 xlsx</button>
+                        <button class="btn-success" onclick="exportUnit('csv')" title="匯出目前查詢結果">匯出 csv</button>
+                        <button class="btn-success" onclick="exportUnit('json')" title="匯出目前查詢結果">匯出 json</button>
+                    </span>
                 </div>
             </div>
             <div id="statusMessageU" class="message status-message"></div>
@@ -1189,8 +1193,15 @@
             document.getElementById('extractBtnU').disabled = false;
         }
 
-        const _unitFilter = { plan: '', branch: '', l1: '', l2: '' };
+        const _unitFilter = { plan: '', branch: '', l1: '', l2: '', q: '' };
         function _onUnitFilter(k, v) { _unitFilter[k] = v; _renderUnitPlan(_unitRows); }
+        const _unitDesc = r => r.level === '分支計畫' ? (r.descFrags || []).map(f => f.t).join('') : (r.desc || '');
+        function _unitPass(r) {
+            const F = _unitFilter;
+            return (!F.plan || r.planCode === F.plan) && (!F.branch || r.branchName === F.branch)
+                && (!F.l1 || r.l1Code === F.l1) && (!F.l2 || r.l2Code === F.l2)
+                && (!F.q || _unitDesc(r).includes(F.q));
+        }
 
         function _renderUnitPlan(rows) {
             const fmt = n => (+n).toLocaleString('en-US');
@@ -1223,12 +1234,12 @@
             const l2Opts = distinct(r => r.l2Code, r => r.l2Code, r => `${r.l2Code} ${r.l2Name}`);
             const F = _unitFilter;
             const selHTML = (k, label, opts, cur) => `<label style="margin-right:14px;white-space:nowrap;">${label}：<select onchange="_onUnitFilter('${k}',this.value)" style="padding:6px;border:1px solid #ccc;border-radius:4px;max-width:260px;"><option value="">全部</option>${opts.map(o => `<option value="${escapeHtml(o.v)}"${o.v === cur ? ' selected' : ''}>${escapeHtml(o.t)}</option>`).join('')}</select></label>`;
-            const clearHTML = (F.plan || F.branch || F.l1 || F.l2) ? `<button class="btn-secondary" onclick="_onUnitFilter('plan','');" title="清除全部條件" style="padding:6px 12px;">清除</button>` : '';
-            const filterHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px 0;align-items:center;margin:10px 0;">${selHTML('plan', '工作計畫', planOpts, F.plan)}${selHTML('branch', '分支計畫', brOpts, F.branch)}${selHTML('l1', '一級科目', l1Opts, F.l1)}${selHTML('l2', '二級科目', l2Opts, F.l2)}${clearHTML}</div>`;
+            const searchHTML = `<label style="margin-right:14px;white-space:nowrap;">編列說明搜尋：<input type="text" value="${escapeHtml(F.q)}" placeholder="輸入關鍵字後按 Enter" oninput="_unitFilter.q=this.value" onchange="_renderUnitPlan(_unitRows)" style="padding:6px;border:1px solid #ccc;border-radius:4px;width:220px;"></label>`;
+            const clearHTML = (F.plan || F.branch || F.l1 || F.l2 || F.q) ? `<button class="btn-secondary" onclick="_unitFilter.q='';_onUnitFilter('plan','');" title="清除全部條件" style="padding:6px 12px;">清除</button>` : '';
+            const filterHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px 0;align-items:center;margin:10px 0;">${selHTML('plan', '工作計畫', planOpts, F.plan)}${selHTML('branch', '分支計畫', brOpts, F.branch)}${selHTML('l1', '一級科目', l1Opts, F.l1)}${selHTML('l2', '二級科目', l2Opts, F.l2)}${searchHTML}${clearHTML}</div>`;
 
-            // 篩選
-            const pass = r => (!F.plan || r.planCode === F.plan) && (!F.branch || r.branchName === F.branch) && (!F.l1 || r.l1Code === F.l1) && (!F.l2 || r.l2Code === F.l2);
-            const view = rows.filter(pass);
+            // 篩選（含編列說明文字查詢）
+            const view = rows.filter(_unitPass);
             // 合計：以篩選結果的二級科目（葉節點）加總，避免上下層重複相加
             const leaves = view.filter(r => r.level === '用途別二級');
             const total = (leaves.length ? leaves : view).reduce((s, r) => s + +r.amount, 0);
@@ -1255,16 +1266,35 @@
                 `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（科目列：白＝金額命中、黃＝順序推論、橘＝區間多科目候選待確認；分支列＝全文，黃底句＝未對到科目）</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
         }
 
-        function exportUnitPlanXlsx() {
+        // 匯出目前查詢結果（xlsx/csv/json）；欄位與畫面一致
+        function exportUnit(kind) {
             if (!_unitRows.length) return;
             const head = ['工作計畫編號', '工作計畫', '分支計畫編號', '分支計畫', '用途別科目代碼', '用途別科目', '金額', '編列說明'];
-            const desc = r => r.level === '分支計畫' ? (r.descFrags || []).map(f => f.t).join('') : (r.desc || '');
             const acctC = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
             const acctN = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
-            const aoa = [head, ..._unitRows.map(r => [r.planCode, r.planName, r.branchCode, r.branchName, acctC(r), acctN(r), +r.amount, desc(r)])];
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '歲出計畫概況表');
-            XLSX.writeFile(wb, '歲出計畫提要及分支計畫概況表.xlsx');
+            const view = _unitRows.filter(_unitPass);
+            const rowArr = r => [r.planCode, r.planName, r.branchCode, r.branchName, acctC(r), acctN(r), +r.amount, _unitDesc(r)];
+            const fname = '歲出計畫提要及分支計畫概況表';
+            if (kind === 'xlsx') {
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([head, ...view.map(rowArr)]), '歲出計畫概況表');
+                XLSX.writeFile(wb, fname + '.xlsx');
+                return;
+            }
+            let content, mime;
+            if (kind === 'csv') {
+                const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+                content = '﻿' + [head, ...view.map(rowArr)].map(row => row.map(esc).join(',')).join('\r\n');
+                mime = 'text/csv;charset=utf-8';
+            } else { // json
+                content = JSON.stringify(view.map(r => Object.fromEntries(head.map((h, i) => [h, rowArr(r)[i]]))), null, 2);
+                mime = 'application/json';
+            }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([content], { type: mime }));
+            a.download = fname + '.' + kind;
+            a.click();
+            URL.revokeObjectURL(a.href);
         }
 
         // ===== 第三個 tab：金額一致性對帳 =====
