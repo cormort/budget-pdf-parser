@@ -1470,9 +1470,12 @@
             for (const line of lines) {
                 const a = _detailAssign(line, cols, rightCut);
                 if (!a.name) continue;
+                // 續行片段的特徵是「不以科目名開頭」，故用嚴格比對 _matchAccount 判定。
+                // 不可用 _matchAccountLoose：它的 includes 迴圈會讓「與交流活動費」命中
+                // 7「會費…救濟與交流活動費」而被誤判成科目列，長名就永遠併不回去。
                 const isCont = Object.keys(a.amounts).length === 0
                     && !_planL1Regex.test(a.name) && !_planL2Regex.test(a.name) && !_planL3Regex.test(a.name)
-                    && !_HEAD_NAMES.includes(a.name) && !_matchAccountLoose(a.name);
+                    && !_HEAD_NAMES.includes(a.name) && !_matchAccount(a.name);
                 if (isCont && items.length) items[items.length - 1].name += a.name;
                 else items.push(a);
             }

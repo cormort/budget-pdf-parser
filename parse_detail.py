@@ -98,6 +98,8 @@ def parse_detail_pdf(pdf_path: Path):
     """generator：逐列產出 row = {fund, level, plan, l1/l2/l3, name, amounts}"""
     with pdfplumber.open(pdf_path) as pdf:
         page_texts = [p.extract_text() or "" for p in pdf.pages]
+        st = {"p1": "", "p2": "", "p3": "", "l1": "", "l2": "", "l3": ""}
+        prev_fund = None
         for pi, page in enumerate(pdf.pages):
             head = [ln.replace(" ", "") for ln in page_texts[pi].split("\n")[:6]]
             # 只取細表頁：頁首含「基金用途明細表」(非說明) 且頁內有科目
@@ -112,7 +114,10 @@ def parse_detail_pdf(pdf_path: Path):
             cols, right_cut = _find_columns(rows)
             if not cols:
                 continue
-            yield from _parse_page(rows, cols, right_cut, fund)
+            if fund != prev_fund:  # 換基金才重設階層，同基金跨頁沿用
+                st.update({"p1": "", "p2": "", "p3": "", "l1": "", "l2": "", "l3": ""})
+                prev_fund = fund
+            yield from _parse_page(rows, cols, right_cut, fund, st)
 
 
 def _assign(cells, cols, right_cut):
@@ -132,11 +137,41 @@ def _assign(cells, cols, right_cut):
     return "".join(p[1] for p in name_parts), amounts
 
 
-def _parse_page(rows, cols, right_cut, fund):
-    plan1 = plan2 = plan3 = ""
-    l1 = l2 = l3 = ""
+_HEAD_NAMES = ("業務計畫及用途別科目", "計畫內容說明", "基金用途")
+
+
+def _merge_wrapped(rows, cols, right_cut):
+    """長名被換行截斷時，續行(無金額、非標號、非科目、非表頭)併回上一列名稱。
+
+    續行片段的特徵是「不以科目名開頭」，故用嚴格的 match_account 判定，
+    例如「與交流活動費」比對不到科目 → 併回上一列，還原成
+    「會費、捐助、補助、分攤、照護、救濟與交流活動費」。
+    """
+    items: list[list] = []
     for _top, cells in rows:
         name, amounts = _assign(cells, cols, right_cut)
+        if not name:
+            continue
+        is_cont = (
+            not amounts
+            and not PLAN_L1.match(name)
+            and not PLAN_L2.match(name)
+            and not PLAN_L3.match(name)
+            and name not in _HEAD_NAMES
+            and not match_account(name)
+        )
+        if is_cont and items:
+            items[-1][0] += name
+        else:
+            items.append([name, amounts])
+    return items
+
+
+def _parse_page(rows, cols, right_cut, fund, st):
+    # 計畫階層需跨頁保留（科目常延續到下一頁），故由呼叫端提供 st
+    plan1, plan2, plan3 = st["p1"], st["p2"], st["p3"]
+    l1, l2, l3 = st["l1"], st["l2"], st["l3"]
+    for name, amounts in _merge_wrapped(rows, cols, right_cut):
         if not name:
             continue
         if name in ("業務計畫及用途別科目", "計畫內容說明", "基金用途"):
@@ -179,6 +214,10 @@ def _parse_page(rows, cols, right_cut, fund):
             "name": name,
             "amounts": amounts,
         }
+        st["p1"], st["p2"], st["p3"] = plan1, plan2, plan3
+        st["l1"], st["l2"], st["l3"] = l1, l2, l3
+    st["p1"], st["p2"], st["p3"] = plan1, plan2, plan3
+    st["l1"], st["l2"], st["l3"] = l1, l2, l3
 
 
 if __name__ == "__main__":
