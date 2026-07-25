@@ -1109,10 +1109,19 @@
             for (const f of merged) f.split(/(?<=[：:])(?=\d+\.)/).forEach(p => { if (p.trim()) frags.push(p.trim()); });
             const cnt = {};
             for (const c of br.codeRows) cnt[c.amount] = (cnt[c.amount] || 0) + 1;
+            // 同額但屬「一級＋其唯一二級子科目」時不算模糊：那是同一筆錢的兩個層級，非兩科目相爭。
+            // 例：一級4000獎補助費 = 二級4085獎勵及慰問 = 468 → 該句應歸給它們，而非留白。
+            const sameMoney = c => {
+                const peers = br.codeRows.filter(x => x.amount === c.amount);
+                if (peers.length !== 2) return false;
+                const l1 = peers.find(x => x.level === '用途別一級'), l2 = peers.find(x => x.level === '用途別二級');
+                if (!l1 || !l2 || l2.l1Code !== l1.l1Code) return false;
+                return br.codeRows.filter(x => x.level === '用途別二級' && x.l1Code === l1.l1Code).length === 1;
+            };
             const claimed = new Set();
             // 第一輪：金額對齊（事實）
             for (const c of br.codeRows) {
-                if (cnt[c.amount] > 1) continue;               // 同金額多科目 → 留白
+                if (cnt[c.amount] > 1 && !sameMoney(c)) continue;   // 真正的同金額多科目 → 留白
                 const re = new RegExp('(?<![\\d,])' + _unitFmt(c.amount) + '千元');  // 邊界，避免 4千元 命中 64千元
                 const hits = [];
                 frags.forEach((f, i) => { if (re.test(f)) hits.push(i); });
@@ -1122,7 +1131,7 @@
             // 第一輪半：金額加總（事實）。二級金額被拆成多個三級明細、句中無整數時，
             // 找某句裡「連續 N千元」之和 == 本科目金額（例：加班費66,589＝超時40,613＋不休假25,976）
             for (const c of br.codeRows) {
-                if (c.descIdx != null || cnt[c.amount] > 1) continue;
+                if (c.descIdx != null || (cnt[c.amount] > 1 && !sameMoney(c))) continue;
                 const target = +c.amount;
                 const hits = [];
                 frags.forEach((f, i) => {
@@ -1166,7 +1175,9 @@
                 }
                 i = j;
             }
-            br.row.descFrags = frags.map((f, idx) => ({ t: f, matched: claimed.has(idx) }));
+            // 無金額句（「本分支計畫係辦理…」「其內容如下：」）本質屬分支計畫層、不歸任何科目，
+            // 視為已歸屬（不標黃），黃底只留給「有金額卻對不到科目」的真正待查句。
+            br.row.descFrags = frags.map((f, idx) => ({ t: f, matched: claimed.has(idx) || !/千元/.test(f) }));
         }
 
         async function parseUnitPlanPdf() {
