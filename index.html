@@ -186,6 +186,13 @@
                     <input type="file" id="fileInputU" accept=".pdf">
                     <span id="fileNameDisplayU">尚未選擇檔案</span>
                     <button id="extractBtnU" class="btn-main" onclick="parseUnitPlanPdf()">解析</button>
+                    <label style="white-space:nowrap;">機關規則：<select id="profileU" onchange="_onUnitProfile(this.value)" style="padding:6px;border:1px solid #ccc;border-radius:4px;" title="通用規則已適用實測三機關；選特定機關可套用該機關的別名與業務別註記寫法">
+                        <option value="auto">通用（自動偵測機關）</option>
+                        <option value="dgbas">行政院主計總處</option>
+                        <option value="edu">教育部</option>
+                        <option value="moa">農業部</option>
+                    </select></label>
+                    <label style="white-space:nowrap;font-size:13px;" title="實測會降低精準度（農業部 二級有說明 221→208、主計總處說明由精準句變整包），預設關閉"><input type="checkbox" id="mergeParenU" onchange="_onUnitMergeParen(this.checked)"> (n) 子項併回父句</label>
                     <span id="exportBtnU" style="display:none;">
                         <button class="btn-success" onclick="exportUnit('xlsx')" title="匯出目前查詢結果">匯出 xlsx</button>
                         <button class="btn-success" onclick="exportUnit('csv')" title="匯出目前查詢結果">匯出 csv</button>
@@ -1059,6 +1066,29 @@
         const _ACCT = { '1000': '人事費', '1005': '民意代表待遇', '1010': '政務人員待遇', '1015': '法定編制人員待遇', '1020': '約聘僱人員待遇', '1025': '技工及工友待遇', '1030': '獎金', '1035': '其他給與', '1040': '加班費', '1045': '退休退職給付', '1050': '退休離職儲金', '1055': '保險', '1060': '調待準備', '2000': '業務費', '2003': '教育訓練費', '2006': '水電費', '2009': '通訊費', '2012': '土地租金', '2015': '權利使用費', '2018': '資訊服務費', '2021': '其他業務租金', '2024': '稅捐及規費', '2027': '保險費', '2030': '兼職費', '2033': '約用人員酬金', '2036': '按日按件計資酬金', '2039': '委辦費', '2042': '國際組織會費', '2045': '國內組織會費', '2048': '軍事裝備及設施', '2051': '物品', '2054': '一般事務費', '2057': '給養費', '2060': '軍事裝備設施養護費', '2063': '房屋建築養護費', '2066': '器具養護費', '2069': '設施及機械設備養護費', '2072': '國內旅費', '2075': '大陸地區旅費', '2078': '國外旅費', '2081': '運費', '2084': '短程車資', '2087': '機要費', '2090': '機密費', '2093': '特別費', '3000': '設備及投資', '3005': '土地', '3010': '房屋建築及設備費', '3015': '公共建設及設施費', '3020': '機械設備費', '3025': '運輸設備費', '3030': '資訊軟硬體設備費', '3035': '雜項設備費', '3040': '權利', '3045': '投資', '4000': '獎補助費', '4005': '對直轄市政府之補助', '4010': '對各縣市政府之補助', '4020': '地方政府對下級政府之補助', '4025': '政府機關間之補助', '4030': '對特種基金之補助', '4035': '對外之捐助', '4040': '對國內團體之捐助', '4045': '對私校之獎助', '4050': '對學生之獎助', '4055': '社會保險負擔', '4060': '對公保軍保退撫基金之補助及挹注', '4065': '社會福利津貼及濟助', '4070': '公費就養及醫療補助', '4075': '差額補貼', '4080': '損失及賠償', '4085': '獎勵及慰問', '4090': '其他補助及捐助', '5000': '債務費', '5005': '債務利息', '5010': '手續費', '6000': '預備金', '6010': '第二預備金', '6015': '其他準備金' };
         // 二級科目別名：敘述用字與官方三級科目名不同時，靠別名歸戶（可持續擴充）
         const _ACCT_ALIAS = { '1040': ['超時工作加班費', '超時加班費', '不休假加班費', '未休假加班費'] };
+
+        // ── 機關規則檔 ──────────────────────────────────────────────
+        // 通用規則已能處理三個實測機關；此處只放「各機關確實不同」的部分，可持續擴充。
+        // mergeParen（(n) 子項併回父句）實測會降低精準度（農業部 二級有說明 221→208、
+        // 主計總處 desc 由精準句變成整包），故各機關預設關閉，僅保留為選項。
+        const _UNIT_PROFILES = {
+            auto: { label: '通用（自動偵測機關）' },
+            dgbas: { label: '行政院主計總處', agency: ['行政院主計總處'] },
+            edu: { label: '教育部', agency: ['教育部'], alias: { '1040': ['超時工作加班費', '不休假加班費'] } },
+            moa: { label: '農業部', agency: ['農業部'], bizNote: /^其中含/ },
+        };
+        let _unitProfile = 'auto';       // 使用者選定的機關規則
+        let _unitAgency = '';            // 自動偵測到的機關名（頁首標題前的字串）
+        let _unitMergeParen = false;     // (n) 子項是否併回父句（預設關閉，見上）
+        function _activeProfile() { return _UNIT_PROFILES[_unitProfile] || _UNIT_PROFILES.auto; }
+        function _onUnitProfile(v) {
+            _unitProfile = v;
+            if (document.getElementById('fileInputU').files.length) parseUnitPlanPdf();
+        }
+        function _onUnitMergeParen(v) {
+            _unitMergeParen = v;
+            if (document.getElementById('fileInputU').files.length) parseUnitPlanPdf();
+        }
         let _unitRows = [];
         document.getElementById('fileInputU').addEventListener('change', () => {
             const f = document.getElementById('fileInputU').files;
@@ -1090,8 +1120,12 @@
 
         // 清掉頁首/欄頭滲入右側說明的文字（上游清理，勝過下游打補丁）
         function _cleanNarr(s) {
-            return s.replace(/[\s　]/g, '')
-                .replace(/行政院主計總處/g, '').replace(/歲出計畫提要及分支計畫概況表/g, '')
+            // 機關名（頁首）依自動偵測或選定的機關規則移除——寫死單一機關會讓其他機關名滲進敘述
+            // （實測：教育部 8 次、農業部 5 次）
+            const names = [...(_activeProfile().agency || []), _unitAgency].filter(Boolean);
+            let t = s.replace(/[\s　]/g, '');
+            for (const n of [...new Set(names)]) t = t.split(n).join('');
+            return t.replace(/歲出計畫提要及分支計畫概況表/g, '')
                 .replace(/經資門併計/g, '').replace(/中華民國\d+年度/g, '')
                 .replace(/單位：新臺幣千元/g, '').replace(/預算金額[\d,]+/g, '').replace(/說明/g, '');
         }
@@ -1106,7 +1140,8 @@
             if (!text) return { text: text || '', unit: '' };
             const notes = [];
             const out = text.replace(/(?<=千元)[（(]([^（()）]{2,30}?)[)）]/g, (m, g) => {
-                if (_UNIT_SUF.test(g) || _BIZ_NOTE.test(g)) { notes.push(g); return ''; }
+                const pB = _activeProfile().bizNote;
+                if (_UNIT_SUF.test(g) || _BIZ_NOTE.test(g) || (pB && pB.test(g))) { notes.push(g); return ''; }
                 return m;
             });
             return { text: out, unit: [...new Set(notes)].join('；') };
@@ -1118,6 +1153,12 @@
             const raw = _cleanNarr(br.narr).split('。').map(f => f.trim()).filter(Boolean).map(f => f + '。');
             const merged = [];
             for (const f of raw) { if (merged.length && /^[<＜]/.test(f)) merged[merged.length - 1] += f; else merged.push(f); }
+            // 選用：(n) 子項也併回父句（機關規則選項，預設關閉）
+            if (_unitMergeParen) {
+                const g = [];
+                for (const f of merged) { if (g.length && /^[（(]\d+[)）]/.test(f)) g[g.length - 1] += f; else g.push(f); }
+                merged.length = 0; merged.push(...g);
+            }
             // 「本項計需經費811,307千元，其內容如下：1.本部人員…」條目間只有「：」沒有句號
             // → 在「：」後的 N. 前補切，避免引言與第一個條目黏成一句、被兩個科目共用
             const frags = [];
@@ -1161,7 +1202,8 @@
             // 第一輪四分三：別名歸戶。敘述用字與官方三級名不同（超時工作加班費/不休假加班費）→ 靠別名表歸到二級
             for (const c of br.codeRows) {
                 if (c.descIdx != null || !c.l2Code) continue;
-                const al = _ACCT_ALIAS[c.l2Code]; if (!al) continue;
+                const pAl = (_activeProfile().alias || {})[c.l2Code] || [];   // 機關規則的別名優先併入
+                const al = [...new Set([...(_ACCT_ALIAS[c.l2Code] || []), ...pAl])]; if (!al.length) continue;
                 const hits = [];
                 frags.forEach((f, i) => { if (al.some(p => f.includes(p))) hits.push(i); });
                 if (hits.length === 1) { c.descIdx = hits[0]; c.desc = frags[hits[0]]; c.aliasMatched = true; claimed.add(hits[0]); }
@@ -1215,6 +1257,7 @@
                 const pdf = await pdfjsLib.getDocument({ data }).promise;
                 const out = [];
                 let plan = null, ctx = { l1: null }, br = null;
+                _unitAgency = '';               // 每次解析重新偵測機關名
                 const closedPlans = new Set();  // 已結案工作計畫；再出現＝進入附錄重複區
                 for (let i = 1; i <= pdf.numPages; i++) {
                     show(el.st, `正在處理第 ${i} / ${pdf.numPages} 頁...`);
@@ -1224,6 +1267,12 @@
                     if (!flat.includes(_UNIT_TITLE)) continue;
                     // pdf.js 的字序與 pdfplumber 不同：表頭以「預算金額<金額><10碼><名稱>工作計畫名稱及編號」順序出現
                     const hm = flat.match(/預算金額([\d,]+?)(\d{10})([^\d]+?)工作計畫名稱及編號/);
+                    // 機關名緊接在頁首標題之前 → 自動偵測（適用任何機關）。只在有表頭的頁偵測並限純中文，
+                    // 否則會在目次頁抓到頁碼與點線（實測「-----31－35二、」）。
+                    if (!_unitAgency && hm) {
+                        const am = flat.match(/([一-鿿]{2,12})歲出計畫提要及分支計畫概況表/);
+                        if (am) _unitAgency = am[1];
+                    }
                     if (hm && (!plan || plan.code !== hm[2])) {
                         if (closedPlans.has(hm[2])) break;   // 已結案的工作計畫又出現 → 附錄重複，停止解析
                         _finalizeBranch(br); br = null;
@@ -1255,7 +1304,8 @@
                 if (!out.length) { show(el.er, '找不到「歲出計畫提要及分支計畫概況表」，請確認檔案。'); document.getElementById('extractBtnU').disabled = false; return; }
                 _renderUnitPlan(out);
                 const nplan = new Set(out.map(r => r.planCode)).size;
-                show(el.st, `解析完成：${nplan} 個工作計畫、${out.length} 列。`);
+                const pLbl = _unitProfile === 'auto' ? `自動偵測：${_unitAgency || '未知機關'}` : _activeProfile().label;
+                show(el.st, `解析完成：${nplan} 個工作計畫、${out.length} 列。（機關規則：${pLbl}${_unitMergeParen ? '，(n) 併回父句' : ''}）`);
                 document.getElementById('exportBtnU').style.display = 'inline-block';
             } catch (e) { show(el.er, '解析失敗：' + e.message); console.error(e); }
             document.getElementById('extractBtnU').disabled = false;
