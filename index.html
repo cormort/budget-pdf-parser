@@ -1095,7 +1095,10 @@
         // 只在「金額於分支內唯一屬於一個科目、且只出現在一句」時才填，否則留白（不臆測）
         function _finalizeBranch(br) {
             if (!br) return;
-            const frags = _cleanNarr(br.narr).split('。').map(f => f.trim()).filter(Boolean).map(f => f + '。');
+            // 切句後，把以 <n> 開頭的子項句併回前一句（<1><2><3> 是同一父項底下的細目，屬同一科目）
+            const raw = _cleanNarr(br.narr).split('。').map(f => f.trim()).filter(Boolean).map(f => f + '。');
+            const frags = [];
+            for (const f of raw) { if (frags.length && /^[<＜]/.test(f)) frags[frags.length - 1] += f; else frags.push(f); }
             const cnt = {};
             for (const c of br.codeRows) cnt[c.amount] = (cnt[c.amount] || 0) + 1;
             const claimed = new Set();
