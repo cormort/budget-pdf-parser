@@ -1054,6 +1054,10 @@
         // 對應 parse_unit_plan.py：靠字元 x 座標切左表，靠代碼判層級。
         const _UNIT_TITLE = '歲出計畫提要及分支計畫概況表';
         const _unitNum = /^-?[\d,]+/;
+        // 官方「歲出用途別科目分類定義」一級+二級 代碼→標準名（用於校正被截斷/異體字的科目名）
+        const _ACCT = { '1000': '人事費', '1005': '民意代表待遇', '1010': '政務人員待遇', '1015': '法定編制人員待遇', '1020': '約聘僱人員待遇', '1025': '技工及工友待遇', '1030': '獎金', '1035': '其他給與', '1040': '加班費', '1045': '退休退職給付', '1050': '退休離職儲金', '1055': '保險', '1060': '調待準備', '2000': '業務費', '2003': '教育訓練費', '2006': '水電費', '2009': '通訊費', '2012': '土地租金', '2015': '權利使用費', '2018': '資訊服務費', '2021': '其他業務租金', '2024': '稅捐及規費', '2027': '保險費', '2030': '兼職費', '2033': '約用人員酬金', '2036': '按日按件計資酬金', '2039': '委辦費', '2042': '國際組織會費', '2045': '國內組織會費', '2048': '軍事裝備及設施', '2051': '物品', '2054': '一般事務費', '2057': '給養費', '2060': '軍事裝備設施養護費', '2063': '房屋建築養護費', '2066': '器具養護費', '2069': '設施及機械設備養護費', '2072': '國內旅費', '2075': '大陸地區旅費', '2078': '國外旅費', '2081': '運費', '2084': '短程車資', '2087': '機要費', '2090': '機密費', '2093': '特別費', '3000': '設備及投資', '3005': '土地', '3010': '房屋建築及設備費', '3015': '公共建設及設施費', '3020': '機械設備費', '3025': '運輸設備費', '3030': '資訊軟硬體設備費', '3035': '雜項設備費', '3040': '權利', '3045': '投資', '4000': '獎補助費', '4005': '對直轄市政府之補助', '4010': '對各縣市政府之補助', '4020': '地方政府對下級政府之補助', '4025': '政府機關間之補助', '4030': '對特種基金之補助', '4035': '對外之捐助', '4040': '對國內團體之捐助', '4045': '對私校之獎助', '4050': '對學生之獎助', '4055': '社會保險負擔', '4060': '對公保軍保退撫基金之補助及挹注', '4065': '社會福利津貼及濟助', '4070': '公費就養及醫療補助', '4075': '差額補貼', '4080': '損失及賠償', '4085': '獎勵及慰問', '4090': '其他補助及捐助', '5000': '債務費', '5005': '債務利息', '5010': '手續費', '6000': '預備金', '6010': '第二預備金', '6015': '其他準備金' };
+        // 二級科目別名：敘述用字與官方三級科目名不同時，靠別名歸戶（可持續擴充）
+        const _ACCT_ALIAS = { '1040': ['超時工作加班費', '超時加班費', '不休假加班費', '未休假加班費'] };
         let _unitRows = [];
         document.getElementById('fileInputU').addEventListener('change', () => {
             const f = document.getElementById('fileInputU').files;
@@ -1110,6 +1114,29 @@
                 frags.forEach((f, i) => { if (re.test(f)) hits.push(i); });
                 if (hits.length !== 1) continue;               // 多句/零句 → 留白
                 c.descIdx = hits[0]; c.desc = frags[hits[0]]; claimed.add(hits[0]);
+            }
+            // 第一輪半：金額加總（事實）。二級金額被拆成多個三級明細、句中無整數時，
+            // 找某句裡「連續 N千元」之和 == 本科目金額（例：加班費66,589＝超時40,613＋不休假25,976）
+            for (const c of br.codeRows) {
+                if (c.descIdx != null || cnt[c.amount] > 1) continue;
+                const target = +c.amount;
+                const hits = [];
+                frags.forEach((f, i) => {
+                    const nums = [...f.matchAll(/([\d,]+)千元/g)].map(x => +x[1].replace(/,/g, ''));
+                    for (let a = 0; a < nums.length; a++) {
+                        let s = 0;
+                        for (let b = a; b < nums.length; b++) { s += nums[b]; if (b > a && s === target) { hits.push(i); return; } if (s > target) break; }
+                    }
+                });
+                if (hits.length === 1) { c.descIdx = hits[0]; c.desc = frags[hits[0]]; c.sumMatched = true; claimed.add(hits[0]); }
+            }
+            // 第一輪四分三：別名歸戶。敘述用字與官方三級名不同（超時工作加班費/不休假加班費）→ 靠別名表歸到二級
+            for (const c of br.codeRows) {
+                if (c.descIdx != null || !c.l2Code) continue;
+                const al = _ACCT_ALIAS[c.l2Code]; if (!al) continue;
+                const hits = [];
+                frags.forEach((f, i) => { if (al.some(p => f.includes(p))) hits.push(i); });
+                if (hits.length === 1) { c.descIdx = hits[0]; c.desc = frags[hits[0]]; c.aliasMatched = true; claimed.add(hits[0]); }
             }
             // 第二輪：順序界限（推論）。被前後已對到的科目夾住、且中間未認領句數==中間未對到科目數 → 1:1 依序指派
             const cr = br.codeRows;
@@ -1176,8 +1203,8 @@
                             const row = { planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: code, branchName: cname, l1Code: '', l1Name: '', l2Code: '', l2Name: '', level: '分支計畫', amount, desc: '', descFrags: [] };
                             out.push(row); br = { row, narr: ln.narr || '', codeRows: [] }; ctx = { l1: null };
                             continue;
-                        } else if (code.length === 4 && code.endsWith('000')) { ctx.l1 = { code, name: cname }; level = '用途別一級'; l1c = code; l1n = cname; }
-                        else if (code.length === 4) { level = '用途別二級'; l1c = ctx.l1 ? ctx.l1.code : ''; l1n = ctx.l1 ? ctx.l1.name : ''; l2c = code; l2n = cname; }
+                        } else if (code.length === 4 && code.endsWith('000')) { const nm = _ACCT[code] || cname; ctx.l1 = { code, name: nm }; level = '用途別一級'; l1c = code; l1n = nm; }
+                        else if (code.length === 4) { level = '用途別二級'; l1c = ctx.l1 ? ctx.l1.code : ''; l1n = ctx.l1 ? ctx.l1.name : ''; l2c = code; l2n = _ACCT[code] || cname; }
                         else continue;
                         const row = { planCode: plan.code, planName: plan.name, planBudget: plan.budget, branchCode: br ? br.row.branchCode : '', branchName: br ? br.row.branchName : '', l1Code: l1c, l1Name: l1n, l2Code: l2c, l2Name: l2n, level, amount, desc: '' };
                         out.push(row);
@@ -1257,7 +1284,9 @@
                 const desc = r.level === '分支計畫' ? branchDesc(r) : escapeHtml(r.desc || '');
                 const descCls = 'up-desc' + (r.ambiguous ? ' narr-amb' : (r.inferred ? ' narr-un' : ''));
                 const descTitle = r.ambiguous ? ' title="不確定：此金額無法對應到句子，區間內有多個科目，以下為候選文字（重複顯示），請人工確認"'
-                    : (r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '');
+                    : r.sumMatched ? ' title="金額加總命中：句中三級明細金額加總＝本科目金額（事實）"'
+                        : r.aliasMatched ? ' title="別名歸戶：敘述用字與官方三級科目名不同，靠別名表對應"'
+                            : (r.inferred ? ' title="依科目順序推論（前後皆對到），非金額命中，請人工確認"' : '');
                 body += `<tr class="${cls[r.level]}">`
                     + `<td style="white-space:nowrap;">${escapeHtml(r.planCode)}</td><td>${escapeHtml(r.planName)}</td>`
                     + `<td style="white-space:nowrap;">${escapeHtml(r.branchCode)}</td><td>${escapeHtml(r.branchName)}</td>`
