@@ -74,6 +74,7 @@
         #unitTable .up-branch td { background: #f6f8fa; font-weight: 600; }
         #unitTable .up-total td { background: #0056b3; color: #fff; font-weight: 700; position: sticky; top: 34px; z-index: 1; }
         #unitTable .up-desc { white-space: normal; line-height: 1.5; font-weight: normal; max-width: 560px; }
+        #unitTable .up-unit { white-space: normal; line-height: 1.45; font-weight: normal; font-size: 12px; color: #4a5568; max-width: 170px; }
         #unitTable .narr-un { background: #fff3cd; }  /* 順序推論／未對應到任何科目的句子（黃） */
         #unitTable td.narr-amb { background: #ffd8b5; }  /* 模糊：區間多科目、候選句重複填入，不確定（橘） */
         .tab-pane { display: none; }
@@ -1097,6 +1098,20 @@
 
         // 分支結案：把該分支的說明切句、依金額掛到對應科目、算出未認領句子（黃底）
         // 只在「金額於分支內唯一屬於一個科目、且只出現在一句」時才填，否則留白（不臆測）
+        // 抽出緊接「千元」之後的括號註記（單位別如「政風處」、主計業務別如「含媒體政策及業務宣導費600千元」），
+        // 回傳去掉註記的本文與註記字串。非此兩類者（如「每5年辦理1次」）保留在本文中。
+        const _UNIT_SUF = /(?:司|處|署|局|會|部|中心|館|所|室|科|組|院|廳|校院|學校)$/;
+        const _BIZ_NOTE = /^(?:其中)?含|資通安全|媒體政策|原住民族教育|附設實驗/;
+        function _pullUnit(text) {
+            if (!text) return { text: text || '', unit: '' };
+            const notes = [];
+            const out = text.replace(/(?<=千元)[（(]([^（()）]{2,30}?)[)）]/g, (m, g) => {
+                if (_UNIT_SUF.test(g) || _BIZ_NOTE.test(g)) { notes.push(g); return ''; }
+                return m;
+            });
+            return { text: out, unit: [...new Set(notes)].join('；') };
+        }
+
         function _finalizeBranch(br) {
             if (!br) return;
             // 切句後，把以 <n> 開頭的子項句併回前一句（<1><2><3> 是同一父項底下的細目，屬同一科目）
@@ -1175,9 +1190,17 @@
                 }
                 i = j;
             }
+            // 把「N千元（政風處）」「N千元（含媒體政策及業務宣導費600千元）」這類緊接金額的括號註記
+            // 抽到「業務別／單位別」欄，讓編列說明變短好讀。只收單位名與業務別註記，其餘保留原句。
+            for (const c of br.codeRows) { const s = _pullUnit(c.desc); c.desc = s.text; c.unitNote = s.unit; }
             // 無金額句（「本分支計畫係辦理…」「其內容如下：」）本質屬分支計畫層、不歸任何科目，
             // 視為已歸屬（不標黃），黃底只留給「有金額卻對不到科目」的真正待查句。
-            br.row.descFrags = frags.map((f, idx) => ({ t: f, matched: claimed.has(idx) || !/千元/.test(f) }));
+            const bUnits = [];
+            br.row.descFrags = frags.map((f, idx) => {
+                const s = _pullUnit(f); if (s.unit) bUnits.push(s.unit);
+                return { t: s.text, matched: claimed.has(idx) || !/千元/.test(s.text) };
+            });
+            br.row.unitNote = [...new Set(bUnits.join('；').split('；').filter(Boolean))].join('；');
         }
 
         async function parseUnitPlanPdf() {
@@ -1288,7 +1311,7 @@
             // 合計：以篩選結果的二級科目（葉節點）加總，避免上下層重複相加
             const leaves = view.filter(r => r.level === '用途別二級');
             const total = (leaves.length ? leaves : view).reduce((s, r) => s + +r.amount, 0);
-            const totalRow = `<tr class="up-total"><td colspan="6">合計（目前篩選：${leaves.length ? leaves.length + ' 筆二級科目' : view.length + ' 筆'}）</td><td class="up-amt">${fmt(total)}</td><td></td></tr>`;
+            const totalRow = `<tr class="up-total"><td colspan="6">合計（目前篩選：${leaves.length ? leaves.length + ' 筆二級科目' : view.length + ' 筆'}）</td><td class="up-amt">${fmt(total)}</td><td></td><td></td></tr>`;
 
             const cls = { '分支計畫': 'up-branch', '用途別一級': 'up-l1', '用途別二級': 'up-l2' };
             const branchDesc = r => (r.descFrags || []).map(f => f.matched ? escapeHtml(f.t) : `<span class="narr-un">${escapeHtml(f.t)}</span>`).join('');
@@ -1307,20 +1330,21 @@
                     + `<td style="white-space:nowrap;">${escapeHtml(r.branchCode)}</td><td>${escapeHtml(r.branchName)}</td>`
                     + `<td style="white-space:nowrap;">${escapeHtml(acctCode)}</td><td>${escapeHtml(acctName)}</td>`
                     + `<td class="up-amt"${bad(r) ? ' style="color:#dc3545;font-weight:700;" title="與下層加總不符"' : ''}>${fmt(r.amount)}</td>`
-                    + `<td class="${descCls}"${descTitle}>${desc}</td></tr>`;
+                    + `<td class="${descCls}"${descTitle}>${desc}</td>`
+                    + `<td class="up-unit">${escapeHtml(r.unitNote || '')}</td></tr>`;
             }
             document.getElementById('tableContainerU').innerHTML = filterHTML + reconLine +
-                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（科目列：白＝金額命中、黃＝順序推論、橘＝區間多科目候選待確認；分支列＝全文，黃底句＝未對到科目）</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
+                `<div class="d-table-wrap"><table id="unitTable"><thead><tr><th>工作計畫編號</th><th>工作計畫</th><th>分支計畫編號</th><th>分支計畫</th><th>用途別科目代碼</th><th style="min-width:160px;">用途別科目</th><th>金額</th><th style="min-width:340px;">編列說明（科目列：白＝金額命中、黃＝順序推論、橘＝區間多科目候選待確認；分支列＝全文，黃底句＝未對到科目）</th><th style="min-width:130px;">業務別／單位別</th></tr></thead><tbody>${totalRow}${body}</tbody></table></div>`;
         }
 
         // 匯出目前查詢結果（xlsx/csv/json）；欄位與畫面一致
         function exportUnit(kind) {
             if (!_unitRows.length) return;
-            const head = ['工作計畫編號', '工作計畫', '分支計畫編號', '分支計畫', '用途別科目代碼', '用途別科目', '金額', '編列說明'];
+            const head = ['工作計畫編號', '工作計畫', '分支計畫編號', '分支計畫', '用途別科目代碼', '用途別科目', '金額', '編列說明', '業務別／單位別'];
             const acctC = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Code : r.l2Code);
             const acctN = r => r.level === '分支計畫' ? '' : (r.level === '用途別一級' ? r.l1Name : r.l2Name);
             const view = _unitRows.filter(_unitPass);
-            const rowArr = r => [r.planCode, r.planName, r.branchCode, r.branchName, acctC(r), acctN(r), +r.amount, _unitDesc(r)];
+            const rowArr = r => [r.planCode, r.planName, r.branchCode, r.branchName, acctC(r), acctN(r), +r.amount, _unitDesc(r), r.unitNote || ''];
             const fname = '歲出計畫提要及分支計畫概況表';
             if (kind === 'xlsx') {
                 const wb = XLSX.utils.book_new();
