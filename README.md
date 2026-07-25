@@ -51,6 +51,8 @@
 - 原始碼：<https://github.com/cormort/unit-budget-parser>
 - 線上版：<https://cormort.github.io/unit-budget-parser/>
 
+> **兩者的解析架構完全不同**（本專案：沒有結構，要從文字造出結構，靠科目**名稱**比對；單位預算工具：結構已知，要把文字掛回結構，靠**金額**比對）。差異對照見 [該專案 README 第八節](https://github.com/cormort/unit-budget-parser#八與-budget-pdf-parser-的解析方式差異)。
+
 解析**單位預算案**（主計總處／教育部／農業部…）的「歲出計畫提要及分支計畫概況表」：靠字元 x 座標切出左側結構表，依 **工作計畫(10碼) → 分支計畫(2碼) → 用途別一級(X000) → 用途別二級** 階層呈現；右側編列說明以「金額命中→金額加總→別名→順序界限」四段規則歸戶到科目，不確定者留白或標色。內建上下合計驗算（二級→一級→分支→工作計畫），三機關實測皆 0 不符。附篩選、說明全文搜尋、合計列與 xlsx／csv／json 匯出。
 
 另有 Python 版（`parse_budget.py` + `mcp_server.py`）提供相同的說明版解析能力，可掛成 MCP server 或 CLI 使用。單位預算概況表**只有網頁版**（上述獨立工具）——原本的 Python CLI 已移除，原因見「六、為什麼移除 parse_unit_plan.py」。
