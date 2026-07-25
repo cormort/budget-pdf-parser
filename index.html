@@ -1101,8 +1101,12 @@
             if (!br) return;
             // 切句後，把以 <n> 開頭的子項句併回前一句（<1><2><3> 是同一父項底下的細目，屬同一科目）
             const raw = _cleanNarr(br.narr).split('。').map(f => f.trim()).filter(Boolean).map(f => f + '。');
+            const merged = [];
+            for (const f of raw) { if (merged.length && /^[<＜]/.test(f)) merged[merged.length - 1] += f; else merged.push(f); }
+            // 「本項計需經費811,307千元，其內容如下：1.本部人員…」條目間只有「：」沒有句號
+            // → 在「：」後的 N. 前補切，避免引言與第一個條目黏成一句、被兩個科目共用
             const frags = [];
-            for (const f of raw) { if (frags.length && /^[<＜]/.test(f)) frags[frags.length - 1] += f; else frags.push(f); }
+            for (const f of merged) f.split(/(?<=[：:])(?=\d+\.)/).forEach(p => { if (p.trim()) frags.push(p.trim()); });
             const cnt = {};
             for (const c of br.codeRows) cnt[c.amount] = (cnt[c.amount] || 0) + 1;
             const claimed = new Set();
