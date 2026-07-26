@@ -1,0 +1,13 @@
+{
+  "name": "budget-pdf-parser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "特種基金預算書 PDF 解析工具（純前端單檔；此 package.json 僅供回歸測試使用）",
+  "type": "module",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "2.10.377"
+  }
+}
