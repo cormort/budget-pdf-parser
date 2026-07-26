@@ -279,10 +279,10 @@
                 let prevFund = '';
                 const outParts = [];
                 for (const lines of usedPages) {
-                    const f = fundOfPage(lines) || prevFund;
+                    const f = fundOfPage(lines) || prevFund;   // 基金名須在剝除頁首前取出
                     if (f && f !== prevFund) outParts.push(FUND_MARK + f);
                     prevFund = f;
-                    outParts.push(lines.join('\n'));
+                    outParts.push((useRange ? lines : _stripPageHead(lines)).join('\n'));
                 }
                 ui.outputArea.value = outParts.join('\n').trim();
                 const funds = [...new Set([...ui.outputArea.value.matchAll(new RegExp('^' + FUND_MARK + '(.+)$', 'gm'))].map(m => m[1]))];
@@ -379,42 +379,20 @@
 
         function stripPageNumbers() {
             let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            // 頁首已於抽取階段依行索引剝除（_stripPageHead），此處只處理頁碼行。
+            // 原本的「重複出現 >=3 次的短純中文行」動態偵測已移除：它會連同「從句中剝除」
+            // 一起把正文用字刪掉（長基金名若出現在敘述裡即中招，且靜默無徵兆）。
+            // 位置固定時用位置判定，不要用字串比對——姊妹專案 unit-budget-parser 曾因此誤刪
+            // 「農業部門」「美國農業部」等正文。
             const lines = text.split('\n');
             const pageRegex = /^[\s　]*[0-9０-９]+(?:[-－‐–—][0-9０-９]+)?[\s　]*$/;
-            const dateHeaderRegex = /^中華民國[\s　]*[0-9０-９]+[\s　]*年度$/;
-            const pureCjkRegex = /^[一-鿿]{2,20}$/;   // 20：涵蓋「農產品受進口損害救助基金」等長機關/基金名
-            // 機關名/基金名等頁首行 = 短純中文行且整份重複出現 >= 3 次，動態偵測不寫死
-            const counts = {};
-            for (const line of lines) {
-                const c = line.trim().replace(/[\s　]/g, '');
-                if (pureCjkRegex.test(c)) counts[c] = (counts[c] || 0) + 1;
-            }
             let count = 0;
-            const filteredLines = lines.filter(line => {
-                const t = line.trim();
-                const c = t.replace(/[\s　]/g, '');
-                if (pageRegex.test(t) || c === '基金用途明細表說明' || dateHeaderRegex.test(c)
-                    || (pureCjkRegex.test(c) && counts[c] >= 3)) { count++; return false; }
+            const filtered = lines.filter(line => {
+                if (pageRegex.test(line.trim())) { count++; return false; }
                 return true;
             });
-            // 頁首字串有時被抽取進「句子中間」，把科目名切斷（如 補(協)助政【基金名】府機關(構)）。
-            // 同一組動態偵測到的頁首字串，長度足夠者一併從句中剝除；計畫標題行與基金標記行不動。
-            const headerNames = Object.keys(counts).filter(c => counts[c] >= 3 && c.length >= 8);
-            let inlineFixed = 0;
-            const cleaned = filteredLines.map(line => {
-                const t = line.trim();
-                if (!t || t.startsWith(FUND_MARK) || t.endsWith('計畫')) return line;
-                let out = line;
-                for (const h of headerNames) {
-                    if (out.includes(h) && out.replace(/[\s　]/g, '') !== h) {
-                        out = out.split(h).join('');
-                        inlineFixed++;
-                    }
-                }
-                return out;
-            });
-            ui.outputArea.value = cleaned.join('\n');
-            showMessage(ui.statusMessage, `已去除 ${count} 行頁碼與頁首標題${inlineFixed ? `，並修復 ${inlineFixed} 處句中頁首插入` : ''}。`);
+            ui.outputArea.value = filtered.join('\n');
+            showMessage(ui.statusMessage, `已移除 ${count} 行頁碼（頁首於抽取階段已依位置剝除）。`);
         }
 
         function autoClean() {
@@ -1042,6 +1020,13 @@
             document.getElementById('fileNameDisplayR').textContent = (f && f.length) ? `已選擇：${f[0].name}` : '尚未選擇檔案';
         });
 
+        // 頁首固定為每頁前 4 行：[0]機關名 [1]基金名 [2]基金用途明細表說明 [3]中華民國X年度
+        // （農業部各基金預算書格式固定，實測兩份共 47 頁：[1][2][3] 命中 47/47）。
+        // 以「行索引」而非 y 座標判定——兩份 PDF 的頁首/正文 y 範圍有重疊（705~790 vs 28~709）。
+        // 基金名須在剝除前取出（FUND_MARK 用），故本函式只負責剝除，呼叫端先取基金名。
+        const _HEAD_LINES = 4;
+        const _stripPageHead = lines => lines.slice(_HEAD_LINES);
+
         // 純抽取「編列說明」章節文字(含 FUND_MARK)，與 extractPdfText 同法(自動抓章節、不含頁碼範圍)
         async function _extractNarrativeText(pdfDoc) {
             const SECTION_MARKER = '基金用途明細表說明', Y = 3;
@@ -1061,7 +1046,7 @@
             const used = selected.length ? selected : pageLinesList;
             const fundOf = ls => { const h = ls.slice(0, 6).map(l => l.replace(/[\s　]/g, '')); const i = h.indexOf(SECTION_MARKER); return (i >= 1 && h[i - 1]) ? h[i - 1] : ''; };
             let prev = ''; const out = [];
-            for (const ls of used) { const f = fundOf(ls) || prev; if (f && f !== prev) out.push(FUND_MARK + f); prev = f; out.push(ls.join('\n')); }
+            for (const ls of used) { const f = fundOf(ls) || prev; if (f && f !== prev) out.push(FUND_MARK + f); prev = f; out.push(_stripPageHead(ls).join('\n')); }
             return out.join('\n').trim();
         }
 
