@@ -11,6 +11,8 @@
         td.acct-filled { background: #fff3cd; }  /* 科目為沿用補上、非本行比對，提示人工確認 */
         tr.lv1-row > td { font-weight: 600; background: #f4f6f8; }  /* 一級科目母列：整列加粗，與其下的二/三級明細列區隔 */
         tr.lv1-row > td.acct-filled { background: #fff3cd; }        /* 推論提示的黃底優先 */
+        tr.orphan-row > td { background: #fffdf3; }                 /* 孤兒句：有金額但歸不到二/三級科目，待人工歸戶 */
+        tr.orphan-row > td.acct-filled { background: #fff3cd; }
         .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
         .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         #fileInput { display: none; }
@@ -890,6 +892,15 @@
                 .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
+        // 只有一級科目的列有兩種，形狀相同但意義相反，必須分開標示：
+        //   lv1   母列＝「…－編列X千元，包括：」其下另有明細列 → 加粗灰底
+        //   orphan 孤兒句＝原文沒寫二/三級科目名，歸不了戶、對帳時會被略過 → 淡黃底待人工歸戶
+        function _rowKind(row) {
+            if (!row.l1Item || row.l2Item || row.l3Item) return '';
+            if (row.isSubtotal || _SUBTOTAL_HINT.test(row.description || '')) return 'lv1';
+            return row.amount ? 'orphan' : 'lv1';
+        }
+
         function displayTable(data, unmatchedLines) {
             const container = ui.tableContainer;
             if (!data || data.length === 0) {
@@ -898,12 +909,13 @@
             }
 
             // Single-pass stats
-            let withAmount = 0, l1Only = 0, l2 = 0, l3 = 0;
+            let withAmount = 0, l1Only = 0, l2 = 0, l3 = 0, orphans = 0;
             for (const r of data) {
                 if (r.amount) withAmount++;
                 if (r.l3Item) l3++;
                 else if (r.l2Item) l2++;
                 else if (r.l1Item) l1Only++;
+                if (_rowKind(r) === 'orphan') orphans++;
             }
 
             const statsHTML = `
@@ -915,6 +927,8 @@
                     <span>L2 <b>${l2}</b></span>
                     <span>L3 <b>${l3}</b></span>
                     <span>未匹配 <b>${(unmatchedLines || []).length}</b></span>
+                    <span title="有金額但原文未寫二/三級科目名，歸不了戶，對帳時會被略過——需人工歸戶"
+                          style="background:#fffdf3;border:1px solid #e6dfc0;border-radius:3px;padding:1px 6px;">孤兒句 <b>${orphans}</b></span>
                 </div>`;
 
             let unmatchedHTML = '';
@@ -955,8 +969,7 @@
                     <span id="filterCount"></span>
                 </div>`;
 
-            // 一級科目列（只有一級、無二/三級）＝該科目的母列，整列加粗以與其下的明細列區隔
-            const rowsHtml = data.map(row => `<tr${row.l1Item && !row.l2Item && !row.l3Item ? ' class="lv1-row"' : ''}>
+            const rowsHtml = data.map(row => `<tr${_rowKind(row) ? ` class="${_rowKind(row)}-row"` : ''}>
                 ${hasFund ? `<td style="white-space:nowrap;">${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
                 ${hasBudget ? `<td style="white-space:nowrap;">${escapeHtml(row.budget)}</td>` : ''}
