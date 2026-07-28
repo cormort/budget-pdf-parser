@@ -832,6 +832,11 @@
                 // 補一列同金額的一級母列(不重複放編列說明)，標 isSubtotal 使對帳不重複計入。
                 if (drilledFromL1 && prefixKind === 'none' && amount) {
                     rows.push({ ...baseRow, l2Item: '', l3Item: '', description: '', raw: '', isSubtotal: true, code: currentCode[0] });
+                    // 同句一路帶到三級時（「材料及用品費－編列辦公(事務)用品1,400千元…」）
+                    // 二級母列同樣要補，否則一級→三級之間會斷層。
+                    if (rowL3) {
+                        rows.push({ ...baseRow, l3Item: '', description: '', raw: '', isSubtotal: true, code: currentCode.substring(0, 2) });
+                    }
                 }
                 rows.push(baseRow);
 
@@ -913,6 +918,7 @@
         //   lv1   母列＝「…－編列X千元，包括：」其下另有明細列 → 加粗灰底
         //   orphan 孤兒句＝原文沒寫二/三級科目名，歸不了戶、對帳時會被略過 → 淡黃底待人工歸戶
         function _rowKind(row) {
+            if (row.isSubtotal && !row.description) return 'lv1';   // 解析器補出的母列(一級或二級)
             if (!row.l1Item || row.l2Item || row.l3Item) return '';
             if (row.isSubtotal || _SUBTOTAL_HINT.test(row.description || '')) return 'lv1';
             return row.amount ? 'orphan' : 'lv1';
@@ -1205,6 +1211,8 @@
                     if (!meta.has(kk)) meta.set(kk, { fund, plan, l1, l2 });
                 };
                 for (const r of nrows) {
+                    // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
+                    if (r.isSubtotal && r.l2Item) continue;
                     const plan = r.planTop || '';
                     if (!r.l2Item) {
                         // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
