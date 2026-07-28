@@ -414,7 +414,9 @@
             // 位置固定時用位置判定，不要用字串比對——姊妹專案 unit-budget-parser 曾因此誤刪
             // 「農業部門」「美國農業部」等正文。
             const lines = text.split('\n');
-            const pageRegex = /^[\s　]*[0-9０-９]+(?:[-－‐–—][0-9０-９]+)?[\s　]*$/;
+            // 破折號兩側可能有空白（PDF 抽出的頁碼常是「2 - 17 」）；此處若漏掉，
+            // 後續清理會把空白去掉而留下獨立的「2-17」行，被解析器併進前一列的編列說明。
+            const pageRegex = /^[\s　]*[0-9０-９]+(?:[\s　]*[-－‐–—][\s　]*[0-9０-９]+)?[\s　]*$/;
             let count = 0;
             const filtered = lines.filter(line => {
                 if (pageRegex.test(line.trim())) { count++; return false; }
