@@ -766,6 +766,20 @@
                                         drilledFromL1 = true;
                                         matched.inferred = true;   // 推論值 → 黃底提示人工複核
                                     }
+                                } else {
+                                    // 母標題句但科目名直接寫在「係／為」之後：
+                                    // 「會費…費－編列11,120千元，係捐助國內團體，辦理內容如下：」
+                                    // 這是原文明寫（非句中掃描），故不標推論；其下子句若歸得了戶，
+                                    // 對帳的區塊邏輯本來就只會取其一，不會重複計。
+                                    const sm = rest.match(/[係為]\s*([^，。；：、]{2,20})/);
+                                    const nm = sm && _matchAccount(sm[1], it => it.code.length === 3);
+                                    if (nm && !_normalize(nm.rest) && nm.code.startsWith(matched.code)) {
+                                        currentL2 = _codeToName.get(nm.code.substring(0, 2)) || '';
+                                        currentL3 = nm.name;
+                                        currentCode = nm.code;
+                                        rowL2 = currentL2; rowL3 = nm.name;
+                                        drilledFromL1 = true;
+                                    }
                                 }
                             }
                         }
