@@ -23,7 +23,7 @@
         .btn-secondary { background-color: #6c757d; }
         .btn-secondary:hover { background-color: #5a6268; }
         button:disabled { background-color: #ccc; cursor: not-allowed; }
-        #output-area { width: 100%; box-sizing: border-box; height: 400px; margin-top: 10px; font-family: "Consolas", "Courier New", monospace; font-size: 14px; border: 1px solid #ced4da; border-radius: 5px; padding: 10px; resize: vertical; }
+        #output-area, #pasteArea { width: 100%; box-sizing: border-box; height: 400px; margin-top: 10px; font-family: "Consolas", "Courier New", monospace; font-size: 14px; border: 1px solid #ced4da; border-radius: 5px; padding: 10px; resize: vertical; }
         #tableContainer { margin-top: 20px; overflow-x: auto; }
         table { border-collapse: collapse; width: 100%; font-size: 14px; }
         th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: top; }
@@ -88,10 +88,11 @@
         </div>
 
         <div class="tab-bar">
-            <button class="tab-btn active" onclick="switchTab('narrative')">用途明細表說明（編列說明）</button>
-            <button class="tab-btn" onclick="switchTab('detail')">用途明細表（本年度/上年度預算・前年度決算）</button>
-            <button class="tab-btn" onclick="switchTab('reconcile')">金額一致性對帳（提醒）</button>
-            <button class="tab-btn" onclick="switchTab('unitplan')">歲出計畫提要及分支計畫概況表（單位預算）</button>
+            <button class="tab-btn active" data-tab="narrative" onclick="switchTab('narrative')">用途明細表說明（編列說明）</button>
+            <button class="tab-btn" data-tab="detail" onclick="switchTab('detail')">用途明細表（本年度/上年度預算・前年度決算）</button>
+            <button class="tab-btn" data-tab="reconcile" onclick="switchTab('reconcile')">金額一致性對帳（提醒）</button>
+            <button class="tab-btn" data-tab="paste" onclick="switchTab('paste')">貼上編列說明文字</button>
+            <button class="tab-btn" data-tab="unitplan" onclick="switchTab('unitplan')">歲出計畫提要及分支計畫概況表（單位預算）</button>
         </div>
 
         <div id="tab-narrative" class="tab-pane active">
@@ -178,6 +179,18 @@
             <div id="errorOutputR" class="message error-message"></div>
             <div id="tableContainerR"><p>對帳結果將顯示於此處。</p></div>
         </div><!-- /tab-reconcile -->
+
+        <div id="tab-paste" class="tab-pane">
+            <div class="step">
+                <h2>貼上編列說明文字</h2>
+                <p class="step-description">手邊沒有 PDF、或只想解析其中一段時，直接把「基金用途明細表說明」的文字貼進來。套用與 PDF 流程完全相同的清理與解析規則，結果顯示在第一個分頁的表格（可篩選、匯出 xlsx）。貼上的文字若沒有基金標題，基金欄會留空。</p>
+                <textarea id="pasteArea" placeholder="在此貼上編列說明文字…"></textarea>
+                <div class="controls" style="margin-top:10px;">
+                    <button class="btn-main" onclick="convertPasted()">建立表格</button>
+                </div>
+            </div>
+            <div id="errorOutputP" class="message error-message"></div>
+        </div><!-- /tab-paste -->
 
         <div id="tab-unitplan" class="tab-pane">
             <div class="step">
@@ -748,11 +761,14 @@
                 }
 
                 const amount = _extractAmount(line);
+                // 有些基金(如林務發展及造林基金)計畫標題直接從「一、」起編，沒有「壹、」層，
+                // 若 planTop 只認第一層會整批落到「未分類計畫」→ 取第一個有值的層級當計畫。
+                const planLevels = [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean);
                 const baseRow = {
                     fund: currentFund,
-                    plan: [currentPlanL1, currentPlanL2, currentPlanL3].filter(Boolean).join(' - ') || '未分類計畫',
-                    planTop: currentPlanL1 || '未分類計畫',
-                    planSub: [currentPlanL2, currentPlanL3].filter(Boolean).join(' - '),
+                    plan: planLevels.join(' - ') || '未分類計畫',
+                    planTop: planLevels[0] || '未分類計畫',
+                    planSub: planLevels.slice(1).join(' - '),
                     budget: currentBudget,
                     l1Item: rowL1,
                     l2Item: rowL2,
@@ -1005,7 +1021,19 @@
             document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
-            if (window.event && window.event.target) window.event.target.classList.add('active');
+            const btn = document.querySelector('.tab-btn[data-tab="' + name + '"]');
+            if (btn) btn.classList.add('active');   // 也支援程式呼叫(無 window.event)
+        }
+
+        // 貼上的文字：走與 PDF 相同的清理→解析→產表，結果沿用第一個分頁的表格區
+        function convertPasted() {
+            const err = document.getElementById('errorOutputP');
+            err.style.display = 'none';
+            const text = document.getElementById('pasteArea').value;
+            if (!text.trim()) { err.textContent = '請先貼上文字。'; err.style.display = 'block'; return; }
+            ui.outputArea.value = _autoCleanText(text);
+            convertToTable();
+            switchTab('narrative');
         }
 
         // ===== 數字用途明細表解析（本年度/上年度預算・前年度決算） =====
