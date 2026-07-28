@@ -715,6 +715,7 @@
 
                 let rowL1 = currentL1, rowL2 = currentL2, rowL3 = currentL3;
                 let description = work;
+                let drilledFromL1 = false;   // 同一句由一級鑽到二/三級 → 另補一列一級母列
 
                 if (matched) {
                     const clen = matched.code.length;
@@ -734,6 +735,7 @@
                                 currentL2 = l2m.name;
                                 currentCode = l2m.code;
                                 rowL2 = l2m.name;
+                                drilledFromL1 = true;
                                 rest = l2m.rest;
                                 if (rest.startsWith('－')) rest = rest.substring(1);
                             } else {
@@ -746,6 +748,7 @@
                                     currentCode = l3m.code;
                                     rowL2 = currentL2;
                                     rowL3 = l3m.name;
+                                    drilledFromL1 = true;
                                     rest = l3m.rest;
                                     if (rest.startsWith('－')) rest = rest.substring(1);
                                 } else if (!_SUBTOTAL_HINT.test(rest)) {
@@ -758,6 +761,7 @@
                                         currentL3 = em.name;
                                         currentCode = em.code;
                                         rowL2 = currentL2; rowL3 = em.name;
+                                        drilledFromL1 = true;
                                         matched.inferred = true;   // 推論值 → 黃底提示人工複核
                                     }
                                 }
@@ -823,6 +827,12 @@
                     confirmed: !!matched && !matched.inferred,      // 本行以科目名確實比對到(非推論/沿用)
                     accountFilled: !matched || !!matched.inferred   // 科目沿用補上或關鍵字推論 → 標記提示
                 };
+                // 「一級－二級－編列N千元」寫在同一句時，原本只產出一列(一級＋二級)，
+                // 與「一級－編列N千元，包括：」那種另有一級母列的寫法層級不一致。
+                // 補一列同金額的一級母列(不重複放編列說明)，標 isSubtotal 使對帳不重複計入。
+                if (drilledFromL1 && prefixKind === 'none' && amount) {
+                    rows.push({ ...baseRow, l2Item: '', l3Item: '', description: '', raw: '', isSubtotal: true, code: currentCode[0] });
+                }
                 rows.push(baseRow);
 
                 // 內嵌明細拆列：標題句中把二/三級科目與金額寫在同一句(如「…－編列1,402,000千元，
