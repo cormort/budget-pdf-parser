@@ -9,7 +9,8 @@
         h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
         p, .step-description { color: #6c757d; }
         td.acct-filled { background: #fff3cd; }  /* 科目為沿用補上、非本行比對，提示人工確認 */
-        td.l1-col { font-weight: 600; }          /* 一級科目加粗，掃視時容易看出分組 */
+        tr.lv1-row > td { font-weight: 600; background: #f4f6f8; }  /* 一級科目母列：整列加粗，與其下的二/三級明細列區隔 */
+        tr.lv1-row > td.acct-filled { background: #fff3cd; }        /* 推論提示的黃底優先 */
         .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
         .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         #fileInput { display: none; }
@@ -954,11 +955,12 @@
                     <span id="filterCount"></span>
                 </div>`;
 
-            const rowsHtml = data.map(row => `<tr>
+            // 一級科目列（只有一級、無二/三級）＝該科目的母列，整列加粗以與其下的明細列區隔
+            const rowsHtml = data.map(row => `<tr${row.l1Item && !row.l2Item && !row.l3Item ? ' class="lv1-row"' : ''}>
                 ${hasFund ? `<td style="white-space:nowrap;">${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
                 ${hasBudget ? `<td style="white-space:nowrap;">${escapeHtml(row.budget)}</td>` : ''}
-                <td class="l1-col${row.accountFilled ? ' acct-filled' : ''}">${escapeHtml(row.l1Item)}</td>
+                <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l1Item)}</td>
                 <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l2Item)}</td>
                 <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l3Item)}</td>
                 <td style="text-align:right; white-space:nowrap;">${row.amount ? row.amount.toLocaleString() : ""}</td>
