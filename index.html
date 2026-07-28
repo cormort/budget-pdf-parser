@@ -9,6 +9,7 @@
         h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
         p, .step-description { color: #6c757d; }
         td.acct-filled { background: #fff3cd; }  /* 科目為沿用補上、非本行比對，提示人工確認 */
+        td.l1-col { font-weight: 600; }          /* 一級科目加粗，掃視時容易看出分組 */
         .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
         .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
         #fileInput { display: none; }
@@ -957,7 +958,7 @@
                 ${hasFund ? `<td style="white-space:nowrap;">${escapeHtml(row.fund)}</td>` : ''}
                 <td>${escapeHtml(row.plan)}</td>
                 ${hasBudget ? `<td style="white-space:nowrap;">${escapeHtml(row.budget)}</td>` : ''}
-                <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l1Item)}</td>
+                <td class="l1-col${row.accountFilled ? ' acct-filled' : ''}">${escapeHtml(row.l1Item)}</td>
                 <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l2Item)}</td>
                 <td${row.accountFilled ? ' class="acct-filled"' : ''}>${escapeHtml(row.l3Item)}</td>
                 <td style="text-align:right; white-space:nowrap;">${row.amount ? row.amount.toLocaleString() : ""}</td>
