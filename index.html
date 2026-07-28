@@ -1205,6 +1205,16 @@
                 // 寫了合計的區塊 → 採合計、跳過其明細(否則重複)；沒寫合計的區塊 → 加總其明細(否則漏算)。
                 const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
                 let curKey = null, blockHasHeader = false;
+                // 母標題句被跳過、其下子句卻全是孤兒(無科目名)時，整個區塊會兩邊都沒算。
+                // 記住該母句金額，等區塊結束仍無任何列計入才補上。限 confirmed(科目名原文
+                // 明寫)——推論來的母句若其 key 在明細側不存在，補上去反而憑空造出單邊差異。
+                let pendingHeader = 0, blockCounted = false;
+                const flushBlock = () => {
+                    if (pendingHeader && !blockCounted && curKey) {
+                        nMap.set(curKey, (nMap.get(curKey) || 0) + pendingHeader);
+                    }
+                    pendingHeader = 0; blockCounted = false;
+                };
                 const addTo = (fund, plan, l1, l2, v) => {
                     const kk = fund + '|' + _akey(plan) + '|' + _akey(l1) + '|' + _akey(l2);
                     nMap.set(kk, (nMap.get(kk) || 0) + v);
@@ -1228,23 +1238,30 @@
                                 addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount);
                             }
                         }
+                        flushBlock();
                         curKey = null; blockHasHeader = false; continue;
                     }
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
-                    if (k !== curKey) { curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
+                    if (k !== curKey) { flushBlock(); curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
                     if (!r.amount) continue;
                     if (r.derived) {                 // 由母列拆出的子列：母列已排除，無條件計入且不影響區塊判斷
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                        blockCounted = true;
                         continue;
                     }
                     if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);
                         blockHasHeader = true;
+                        blockCounted = true;
                     } else if (r.l3Item && !blockHasHeader && !_SUBTOTAL.test(r.description)) {
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
+                        blockCounted = true;
+                    } else if (r.l3Item && r.confirmed && _SUBTOTAL.test(r.description)) {
+                        pendingHeader += r.amount;                     // 母標題句：子句都歸不了戶時才補計
                     }
                 }
+                flushBlock();   // 收尾：最後一個區塊
                 // 明細表有二級小計列時以它為準；但某些分類只列了三級（未給二級小計），
                 // 例如「分攤」底下只有一筆 分擔其他費用1,860千元 ——只取二級列會整筆漏掉，
                 // 使明細側少算。故：有二級列用二級列，沒有才加總其三級列。
