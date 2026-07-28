@@ -437,6 +437,9 @@
             .replace(/[\s、及－\-]/g, '')
             .replace(/擔/g, '攤');   // 異體字：明細表印「分擔」、科目表 73 為「分攤」，視為同字
 
+        // 母標題句特徵：其後另有子句逐項列出，母句金額為小計，不可再自行歸戶(會重複計)
+        const _SUBTOTAL_HINT = /包括|分述如|如[下次]|下列|辦理內容如下/;
+
         const _walkMatch = (line, normName) => {
             let pos = 0, consumed = 0, depth = 0;
             while (pos < line.length && consumed < normName.length) {
@@ -739,6 +742,18 @@
                                     rowL3 = l3m.name;
                                     rest = l3m.rest;
                                     if (rest.startsWith('－')) rest = rest.substring(1);
+                                } else if (!_SUBTOTAL_HINT.test(rest)) {
+                                    // 「服務費用－編列250千元，係國內旅費。」科目名寫在金額之後：
+                                    // 只掃「剝掉一級科目名的餘句」——一級名自身含三級名(如「…與交流活動費」
+                                    // 內含 752)，掃整句必誤中。母標題句(包括：/如下)排除，避免與子句重複計。
+                                    const em = _embeddedAccount(_normalize(rest), matched.code);
+                                    if (em) {
+                                        currentL2 = _codeToName.get(em.code.substring(0, 2)) || '';
+                                        currentL3 = em.name;
+                                        currentCode = em.code;
+                                        rowL2 = currentL2; rowL3 = em.name;
+                                        matched.inferred = true;   // 推論值 → 黃底提示人工複核
+                                    }
                                 }
                             }
                         }
