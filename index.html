@@ -676,10 +676,12 @@
                 else if (prefixKind === 'number') levelPref = [2, 3];
                 else levelPref = [3, 2];   // (1) 標號多為三級，但農村再生用它標二級科目，故退而求其次也試二級
 
+                // 各層級都比一次，取「科目名最長」者——短的二級名可能是長的三級名的前綴，
+                // 依層級順序先中就停會歸錯：「分擔員工保險費…」(181 福利費)會被二級「分攤」(73)攔截。
                 let matched = null;
                 for (const lvl of levelPref) {
-                    matched = _matchAccount(work, it => it.code.length === lvl);
-                    if (matched) break;
+                    const m = _matchAccount(work, it => it.code.length === lvl);
+                    if (m && (!matched || m.name.length > matched.name.length)) matched = m;
                 }
 
                 if (!matched && prefixKind === 'number') {
@@ -790,7 +792,12 @@
                     if (!prev.amount) prev.amount = _extractAmount(line);
                     continue;
                 } else {
-                    rowL1 = currentL1; rowL2 = currentL2; rowL3 = '';
+                    // 「委託○○辦理…等費用N千元」自成一項支出，與上一行科目無關；
+                    // 沿用上一行會產生「看起來正確的錯數字」(實測 3 筆、7,064 萬)，
+                    // 寧可留白成孤兒句待人工歸戶——留白是誠實的，沿用不是。
+                    const isCommission = /^委託/.test(work.trim());
+                    rowL1 = currentL1; rowL2 = isCommission ? '' : currentL2; rowL3 = '';
+                    if (isCommission) currentL2 = '';
                     currentL3 = '';
                     description = work.trim();
                     if (prefixKind === 'none') unmatchedLines.push(line);
