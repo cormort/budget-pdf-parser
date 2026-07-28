@@ -3,4 +3,5 @@ __pycache__/
 *.xlsx
 .DS_Store
 *.pdf
+!examples/*.pdf
 node_modules/
