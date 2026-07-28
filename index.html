@@ -159,6 +159,10 @@
                     <span id="fileNameDisplayD">尚未選擇檔案</span>
                     <button id="extractBtnD" class="btn-main" onclick="parseDetailPdf()">解析</button>
                 </div>
+                <div class="controls" style="margin-top:10px;">
+                    <span style="color:#6c757d; font-size:13px;">沒有檔案？載入範例：</span>
+                    <button class="btn-secondary" onclick="loadSample('fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">115年度農業特別收入基金預算案</button>
+                </div>
             </div>
             <div id="statusMessageD" class="message status-message"></div>
             <div id="errorOutputD" class="message error-message"></div>
@@ -585,9 +589,14 @@
                     continue;
                 }
 
-                // 「機關＋基金＋計畫」黏成一行的計畫標題(不帶標號)，如「農業部○○基金△△計畫」
-                if (line.endsWith('計畫') && line.includes('基金') && !line.includes('千元')) {
-                    currentPlanL1 = line.split('基金').pop().trim();
+                // 不帶標號的計畫標題：可能黏著機關與基金名(「農業部○○基金△△計畫」)，
+                // 也可能整行就是計畫名(如農業天然災害救助基金的「農業天然災害救助計畫」)。
+                // 兩份實測 PDF 中符合此條件者僅 2 行，皆為真標題、無誤傷正文；長度上限為安全閥。
+                // 必須「無標號」——帶標號者交給下面的 L1/L2/L3 規則，否則階層會被壓平。
+                if (line.endsWith('計畫') && !line.includes('千元') && line.length <= 30
+                    && !_planL1Regex.test(line) && !_planL2Regex.test(line) && !_planL3Regex.test(line)
+                    && !_numberPrefixRegex.test(line)) {
+                    currentPlanL1 = line.includes('基金') ? line.split('基金').pop().trim() : line;
                     currentPlanL2 = currentPlanL3 = currentBudget = '';
                     currentL1 = currentL2 = currentL3 = ''; currentCode = '';
                     continue;
