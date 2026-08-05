@@ -1102,9 +1102,21 @@
 
             document.getElementById('exportBtn').addEventListener('click', () => {
                 const visible = data.filter(rowVisible);
+                // 「列別」是匯出的必要欄位，不是裝飾：畫面靠加粗灰底標出小計列，匯出後那個區別會消失，
+                // 在 Excel 對金額欄拉一個 SUM 就會把小計與明細一起加，且看不出錯在哪。
+                // 刻意不沿用 _rowKind()——它是畫面樣式用的，把兩種加總語意不同的列都算成 lv1：
+                //   母列（小計）：解析器補出的上層列，金額與其下明細「完全」重複 → 加總必須濾掉
+                //   母標題句　　：原文自帶的小計句(「…編列16,982千元，包括：」)，其下子句若各自
+                //                成列則重複、若全歸不了戶則是唯一有金額的列 → 需逐案判斷
+                // 實測 examples/moa-fund-115.pdf：全部相加 1,902.8 億、濾掉母列（小計）1,510.3 億、
+                // 兩種都濾 790.9 億（過度扣減）——併成一類就沒辦法讓使用者做對的那個減法。
+                const kindOf = r => r.isSubtotal ? '母列（小計）'
+                    : _rowKind(r) === 'orphan' ? '孤兒句'
+                        : _SUBTOTAL_HINT.test(r.description || '') ? '母標題句'
+                            : '明細';
                 const aoa = [
-                    [...(hasFund ? ['基金'] : []), '計畫名稱', ...(hasBudget ? ['預算別'] : []), '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明'],
-                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, ...(hasBudget ? [r.budget] : []), r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.raw || '']),
+                    [...(hasFund ? ['基金'] : []), '計畫名稱', ...(hasBudget ? ['預算別'] : []), '列別', '一級科目', '二級科目', '三級科目', '金額 (元)', '編列說明'],
+                    ...visible.map(r => [...(hasFund ? [r.fund] : []), r.plan, ...(hasBudget ? [r.budget] : []), kindOf(r), r.l1Item, r.l2Item, r.l3Item, r.amount || '', r.raw || '']),
                 ];
                 const wb = XLSX.utils.book_new();
                 XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '解析結果');
@@ -1221,6 +1233,13 @@
                 const nrows = parseNarrativeText(text).rows;
                 // 明細版
                 const dres = await parseDetailDoc(doc);
+                // 沒有明細側就沒有對照組。少了這道檢查，說明版的每一列都會落進「僅一節出現」，
+                // 畫面顯示「不一致 0、相符 0」——讀起來像對得很乾淨，其實是根本沒對到東西。
+                if (!dres.rows.length) {
+                    show('errorOutputR', '這份 PDF 沒有解析到「用途明細表」的數字細表頁，無法對帳。'
+                        + `（編列說明側解析到 ${nrows.length} 列）對帳需要同時含兩節的完整預算書。`);
+                    return;
+                }
                 const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
                 // 彙總到 基金|一級|二級
                 const nMap = new Map(), dMap = new Map(), meta = new Map();
@@ -1625,6 +1644,11 @@
                 _parseDetailItems(merged, fund, rows, st, pageFmt === 'decal');  // 跨頁沿用同基金的計畫脈絡
             }
             const amtCols = [];
+            // 排除母基金彙總頁。這裡寫死基金名，不會套用到其他機關的預算書——換一份書，
+            // 它自己的母基金彙總列就會被當一般資料列計入。曾試著改成結構性判斷（「總額＝各分基金
+            // 相加者為母基金」），但 114 年度自編決算實測母基金 596.9 億 ≠ 分基金相加 568.0 億
+            // （差 5%），該假設不成立，故維持寫死並記在 TODO.md F 項，不憑臆測放寬。
+            // 預算書側此條件為空轉（母基金頁本來就解析不出列），只有決算書會真的濾掉東西。
             const validRows = rows.filter(r => r.fund && !r.fund.includes('農業特別收入基金'));
             for (const r of validRows) for (const c of Object.keys(r.amounts)) if (!amtCols.includes(c)) amtCols.push(c);
             amtCols.sort((a, b) => {
@@ -1651,7 +1675,7 @@
             const amtCols = [], map = new Map(), order = [];
             for (const s of _detailSources) {
                 for (const r of s.rows) {
-                    if (!r.fund || r.fund.includes('農業特別收入基金')) continue;
+                    if (!r.fund || r.fund.includes('農業特別收入基金')) continue;   // 同 parseDetailDoc，見該處註解
                     const k = key(r);
                     let row = map.get(k);
                     if (!row) { row = { fund: r.fund, plan: r.plan, level: r.level, name: r.name, amounts: {} }; map.set(k, row); order.push(k); }
