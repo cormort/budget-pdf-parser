@@ -1267,7 +1267,7 @@
                 for (const r of nrows) {
                     // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
                     if (r.isSubtotal && r.l2Item) continue;
-                    const plan = r.planTop || '';
+                    const plan = r.plan || '';   // 對到子計畫層(完整計畫路徑)，只對到大計畫時差異很難追
                     if (!r.l2Item) {
                         // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
                         // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
@@ -1313,7 +1313,7 @@
                 for (const r of dres.rows) {
                     const amt = r.amounts['本年度預算'];
                     if (!amt || !r.l2) continue;
-                    const plan = (r.plan || '').split(' - ')[0];
+                    const plan = r.plan || '';
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
                     if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
