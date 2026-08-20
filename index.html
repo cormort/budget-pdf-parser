@@ -185,7 +185,7 @@
         <div id="tab-reconcile" class="tab-pane">
             <div class="step">
                 <h2>金額一致性對帳（提醒工具）</h2>
-                <p class="step-description">上傳<strong>同一份</strong>預算書 PDF（同時含「編列說明」與「用途明細表」兩節）。系統以兩節各自解析出的金額，於「基金＋一級＋二級科目」層級比對，列出<strong>兩節金額不一致</strong>或<strong>僅一節出現</strong>的科目，提醒您人工複核。此為提醒非稽核：兩節粒度不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常。</p>
+                <p class="step-description">上傳<strong>同一份</strong>預算書 PDF（同時含「編列說明」與「用途明細表」兩節）。系統以兩節各自解析出的金額，於「基金＋計畫(含子計畫)＋一級＋二級科目」層級比對，金額以<strong>千元</strong>顯示，列出<strong>兩節金額不一致</strong>或<strong>僅一節出現</strong>的科目，提醒您人工複核。此為提醒非稽核：兩節粒度不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常。</p>
                 <div class="controls">
                     <label for="fileInputR" class="file-label">選擇 PDF 檔案</label>
                     <input type="file" id="fileInputR" accept=".pdf">
@@ -1333,14 +1333,14 @@
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
-                const fundDiff = [...new Set(diff.map(r => r.fund))].sort().map(f => `${f.replace(/基金$/, '')} ${diff.filter(r => r.fund === f).length}`).join('、');
-                show('statusMessageR', `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。${fundDiff ? '不一致分布：' + fundDiff + '。' : ''}請優先核對「金額不一致」。`);
+                show('statusMessageR', _reconcileSummary(diff, onlyOne, ok));
             } catch (e) { console.error(e); show('errorOutputR', '對帳失敗：' + e.message); }
             finally { el('extractBtnR').disabled = false; }
         }
 
         function _renderReconcile(diff, onlyOne, ok) {
-            const fmt = v => v == null ? '—' : v.toLocaleString();
+            // 顯示單位千元：預算書原文就是千元，換算回去才好直接跟 PDF 文字對讀
+            const fmt = v => v == null ? '—' : (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
             const cont = document.getElementById('tableContainerR');
             diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
@@ -1350,9 +1350,9 @@
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
-                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + r.delta.toLocaleString()}</td>` : '<td></td>'}
+                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>` : '<td></td>'}
              </tr>`;
-            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額</th><th>用途明細表金額</th><th>差額(編列說明−用途明細表)</th></tr></thead>';
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
             const section = (title, note, list, showDelta) => list.length ? `
                 <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
                 <p class="step-description" style="margin:0 0 8px;">${note}</p>
@@ -1385,11 +1385,20 @@
             sel.style.display = funds.length > 1 ? '' : 'none';
         }
 
+        function _reconcileSummary(diff, onlyOne, ok) {
+            const fundDiff = [...new Set(diff.map(r => r.fund))].sort().map(f => `${f.replace(/基金$/, '')} ${diff.filter(r => r.fund === f).length}`).join('、');
+            return `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。${fundDiff ? '不一致分布：' + fundDiff + '。' : ''}請優先核對「金額不一致」。`;
+        }
+
         function _filterReconcile() {
             const fund = document.getElementById('fundFilterR').value;
             const { diff, onlyOne, ok } = _reconcileData;
             const filter = arr => fund ? arr.filter(r => r.fund === fund) : arr;
             _renderReconcile(filter(diff), filter(onlyOne), filter(ok));
+            // 統計列不跟著篩就會一直顯示全部基金的數字，看起來像篩選沒作用
+            const st = document.getElementById('statusMessageR');
+            st.textContent = (fund ? fund + ' — ' : '') + _reconcileSummary(filter(diff), filter(onlyOne), filter(ok));
+            st.style.display = 'block';
         }
 
         function _expandItem(it) {
