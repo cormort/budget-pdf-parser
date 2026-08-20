@@ -1336,7 +1336,9 @@
                     const rk = row.fund + '|' + _akey(top) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
                     const m = n != null ? rollN : rollD;
                     m.set(rk, (m.get(rk) || 0) + (n != null ? n : d));
-                    if (!rollMeta.has(rk)) rollMeta.set(rk, { fund: row.fund, plan: top, l1: row.l1, l2: row.l2 });
+                    if (!rollMeta.has(rk)) rollMeta.set(rk, { fund: row.fund, plan: top, l1: row.l1, l2: row.l2, parts: [] });
+                    // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
+                    rollMeta.get(rk).parts.push({ plan: row.plan, side: n != null ? '說明' : '明細', v: n != null ? n : d });
                 }
                 for (const rk of new Set([...rollN.keys(), ...rollD.keys()])) {
                     const n = rollN.has(rk) ? rollN.get(rk) : null, d = rollD.has(rk) ? rollD.get(rk) : null;
@@ -1360,7 +1362,8 @@
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td>${escapeHtml(r.plan)}${r.rollup ? '<span style="color:#6c757d;font-size:12px;">（大計畫層比對）</span>' : ''}</td>
+                <td>${escapeHtml(r.plan)}${r.rollup ? '<span style="color:#6c757d;font-size:12px;">（大計畫層比對）</span><div style="color:#6c757d;font-size:12px;margin-top:2px;">'
+                    + r.parts.map(p => `${p.side}｜${escapeHtml(p.plan || '(無計畫)')}　${fmt(p.v)}`).join('<br>') + '</div>' : ''}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
