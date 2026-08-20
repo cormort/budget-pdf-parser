@@ -1324,28 +1324,42 @@
                 }
                 const keys = new Set([...nMap.keys(), ...dMap.keys()]);
                 const diff = [], onlyOne = [], ok = [];
-                // 兩段式比對。第一段用完整計畫路徑(含子計畫)——對得上的差異才追查得動。
-                // 兩節的計畫層級寫法常對不齊(一節寫到子計畫、另一節只到大計畫)，這種殘留
-                // 若直接丟進「僅一節出現」會製造大量假差異，故第二段把殘留按大計畫加總再比一次。
-                const rollN = new Map(), rollD = new Map(), rollMeta = new Map();
+                // 逐層退讓比對。先用完整計畫路徑(含所有子計畫層)比；對不上的殘留，改用
+                // 少一層的計畫路徑加總再比，一路退到大計畫層為止。
+                // 兩節的計畫層級深度常不同——用途明細表對某些基金只列到第二層(實測農村再生
+                // 基金即是：明細表最深只到「一、農村再生社區發展及環境改善」，第三層子計畫
+                // 只出現在編列說明)——直接丟進「僅一節出現」會製造大量假差異，退到「兩節都
+                // 有的最深層」才既對得上、又把差異鎖在盡量小的範圍。
+                let rest = [];
                 for (const k of keys) {
                     const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
                     const row = { ...meta.get(k), n, d };
                     if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
-                    const top = (row.plan || '').split(' - ')[0];
-                    const rk = row.fund + '|' + _akey(top) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
-                    const m = n != null ? rollN : rollD;
-                    m.set(rk, (m.get(rk) || 0) + (n != null ? n : d));
-                    if (!rollMeta.has(rk)) rollMeta.set(rk, { fund: row.fund, plan: top, l1: row.l1, l2: row.l2, parts: [] });
-                    // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
-                    rollMeta.get(rk).parts.push({ plan: row.plan, side: n != null ? '說明' : '明細', v: n != null ? n : d });
+                    rest.push(row);
                 }
-                for (const rk of new Set([...rollN.keys(), ...rollD.keys()])) {
-                    const n = rollN.has(rk) ? rollN.get(rk) : null, d = rollD.has(rk) ? rollD.get(rk) : null;
-                    const row = { ...rollMeta.get(rk), n, d, rollup: true };
-                    if (n != null && d != null) (n === d ? ok : diff).push({ ...row, delta: n - d });
-                    else onlyOne.push(row);
+                const depthOf = r => (r.plan || '').split(' - ').length;
+                for (let depth = Math.max(1, ...rest.map(depthOf)) - 1; depth >= 1 && rest.length; depth--) {
+                    const gN = new Map(), gD = new Map(), gMeta = new Map(), members = new Map();
+                    for (const row of rest) {
+                        const plan = (row.plan || '').split(' - ').slice(0, depth).join(' - ');
+                        const gk = row.fund + '|' + _akey(plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
+                        const isN = row.n != null, v = isN ? row.n : row.d;
+                        (isN ? gN : gD).set(gk, ((isN ? gN : gD).get(gk) || 0) + v);
+                        if (!gMeta.has(gk)) { gMeta.set(gk, { fund: row.fund, plan, l1: row.l1, l2: row.l2, parts: [] }); members.set(gk, []); }
+                        // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
+                        gMeta.get(gk).parts.push({ plan: row.plan, side: isN ? '說明' : '明細', v });
+                        members.get(gk).push(row);
+                    }
+                    const next = [];
+                    for (const gk of new Set([...gN.keys(), ...gD.keys()])) {
+                        const n = gN.has(gk) ? gN.get(gk) : null, d = gD.has(gk) ? gD.get(gk) : null;
+                        if (n == null || d == null) { next.push(...members.get(gk)); continue; }   // 這層仍只有一節 → 再退一層
+                        const row = { ...gMeta.get(gk), n, d, rollup: depth };
+                        (n === d ? ok : diff).push({ ...row, delta: n - d });
+                    }
+                    rest = next;
                 }
+                onlyOne.push(...rest);   // 退到大計畫層仍只有一節出現
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
@@ -1363,10 +1377,10 @@
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td>${escapeHtml((r.plan || '').split(' - ')[0])}</td>
-                <td>${r.rollup
-                    ? '<span style="color:#6c757d;font-size:12px;">（兩節子計畫層級對不齊，改以大計畫層加總比對）</span><div style="color:#6c757d;font-size:12px;margin-top:2px;">'
-                      + r.parts.map(p => `${p.side}｜${escapeHtml((p.plan || '').split(' - ').slice(1).join(' - ') || '(無子計畫)')}　${fmt(p.v)}`).join('<br>') + '</div>'
-                    : escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}</td>
+                <td>${escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}${r.rollup
+                    ? `<div style="color:#6c757d;font-size:12px;margin-top:2px;">（更細層兩節對不齊，比到第 ${r.rollup} 層計畫）<br>`
+                      + r.parts.map(p => `${p.side}｜${escapeHtml((p.plan || '').split(' - ').slice(r.rollup).join(' - ') || '(無更細層)')}　${fmt(p.v)}`).join('<br>') + '</div>'
+                    : ''}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
