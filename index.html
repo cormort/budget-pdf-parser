@@ -1374,18 +1374,24 @@
             const cont = document.getElementById('tableContainerR');
             diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
+            const amtTd = v => `<td style="text-align:right;white-space:nowrap;">${fmt(v)}</td>`;
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td>${escapeHtml((r.plan || '').split(' - ')[0])}</td>
                 <td>${escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}${r.rollup
-                    ? `<div style="color:#6c757d;font-size:12px;margin-top:2px;">（更細層兩節對不齊，比到第 ${r.rollup} 層計畫）<br>`
-                      + r.parts.map(p => `${p.side}｜${escapeHtml((p.plan || '').split(' - ').slice(r.rollup).join(' - ') || '(無更細層)')}　${fmt(p.v)}`).join('<br>') + '</div>'
-                    : ''}</td>
+                    ? `<div style="color:#6c757d;font-size:12px;margin-top:2px;">（更細層兩節對不齊，比到第 ${r.rollup} 層計畫；下列為併入的更細層計畫）</div>` : ''}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
-                <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
-                <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
+                ${amtTd(r.n)}${amtTd(r.d)}
                 ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>` : '<td></td>'}
-             </tr>`;
+             </tr>`
+                // 併入的更細層計畫各自成一列：金額落在自己那一節的欄位，另一節沒有就留空白，
+                // 一眼看得出缺口在哪個子計畫。擠在同一格裡看不出來。
+                + (r.rollup ? r.parts.map(p => `<tr style="color:#6c757d;font-size:13px;">
+                    <td></td><td></td>
+                    <td style="padding-left:18px;">└ ${escapeHtml((p.plan || '').split(' - ').slice(r.rollup).join(' - ') || '(無更細層)')}</td>
+                    <td></td><td></td>
+                    ${amtTd(p.side === '說明' ? p.v : null)}${amtTd(p.side === '明細' ? p.v : null)}
+                    <td></td></tr>`).join('') : '');
             const head = '<thead><tr><th>基金</th><th>計畫</th><th>子計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
             const section = (title, note, list, showDelta) => list.length ? `
                 <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
