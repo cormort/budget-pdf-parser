@@ -1324,9 +1324,23 @@
                 }
                 const keys = new Set([...nMap.keys(), ...dMap.keys()]);
                 const diff = [], onlyOne = [], ok = [];
+                // 兩段式比對。第一段用完整計畫路徑(含子計畫)——對得上的差異才追查得動。
+                // 兩節的計畫層級寫法常對不齊(一節寫到子計畫、另一節只到大計畫)，這種殘留
+                // 若直接丟進「僅一節出現」會製造大量假差異，故第二段把殘留按大計畫加總再比一次。
+                const rollN = new Map(), rollD = new Map(), rollMeta = new Map();
                 for (const k of keys) {
                     const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
                     const row = { ...meta.get(k), n, d };
+                    if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
+                    const top = (row.plan || '').split(' - ')[0];
+                    const rk = row.fund + '|' + _akey(top) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
+                    const m = n != null ? rollN : rollD;
+                    m.set(rk, (m.get(rk) || 0) + (n != null ? n : d));
+                    if (!rollMeta.has(rk)) rollMeta.set(rk, { fund: row.fund, plan: top, l1: row.l1, l2: row.l2 });
+                }
+                for (const rk of new Set([...rollN.keys(), ...rollD.keys()])) {
+                    const n = rollN.has(rk) ? rollN.get(rk) : null, d = rollD.has(rk) ? rollD.get(rk) : null;
+                    const row = { ...rollMeta.get(rk), n, d, rollup: true };
                     if (n != null && d != null) (n === d ? ok : diff).push({ ...row, delta: n - d });
                     else onlyOne.push(row);
                 }
@@ -1346,7 +1360,7 @@
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td>${escapeHtml(r.plan)}</td>
+                <td>${escapeHtml(r.plan)}${r.rollup ? '<span style="color:#6c757d;font-size:12px;">（大計畫層比對）</span>' : ''}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
