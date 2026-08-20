@@ -1362,14 +1362,17 @@
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td>${escapeHtml(r.plan)}${r.rollup ? '<span style="color:#6c757d;font-size:12px;">（大計畫層比對）</span><div style="color:#6c757d;font-size:12px;margin-top:2px;">'
-                    + r.parts.map(p => `${p.side}｜${escapeHtml(p.plan || '(無計畫)')}　${fmt(p.v)}`).join('<br>') + '</div>' : ''}</td>
+                <td>${escapeHtml((r.plan || '').split(' - ')[0])}</td>
+                <td>${r.rollup
+                    ? '<span style="color:#6c757d;font-size:12px;">（兩節子計畫層級對不齊，改以大計畫層加總比對）</span><div style="color:#6c757d;font-size:12px;margin-top:2px;">'
+                      + r.parts.map(p => `${p.side}｜${escapeHtml((p.plan || '').split(' - ').slice(1).join(' - ') || '(無子計畫)')}　${fmt(p.v)}`).join('<br>') + '</div>'
+                    : escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
                 <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
                 ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>` : '<td></td>'}
              </tr>`;
-            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>子計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
             const section = (title, note, list, showDelta) => list.length ? `
                 <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
                 <p class="step-description" style="margin:0 0 8px;">${note}</p>
@@ -1746,7 +1749,7 @@
         }
 
         function _parseDetailItems(items, fund, out, st, isDecal) {
-            for (const { name, amounts } of items) {
+            for (let { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
                 if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
                 const cleanN = name.replace(/[\s　]/g, '');
@@ -1758,6 +1761,9 @@
                     st.p1 = st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = '';
                     continue;  // 分基金合計行本身不輸出
                 }
+                // 明細表的計畫名右端可能黏到頁碼（如「…預警體系計畫5-28」），不剝除會讓
+                // 同一個計畫在兩節被當成不同計畫。只對計畫名做，科目名不會以此形式結尾。
+                name = name.replace(/[\s　]*[0-9]{1,3}[-－‐–—][0-9]{1,3}[\s　]*$/, '');
                 let level, displayName = name;
                 // 計畫標號偵測（預算書/決算書皆適用）
                 if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
