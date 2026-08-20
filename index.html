@@ -185,7 +185,7 @@
         <div id="tab-reconcile" class="tab-pane">
             <div class="step">
                 <h2>金額一致性對帳（提醒工具）</h2>
-                <p class="step-description">上傳<strong>同一份</strong>預算書 PDF（同時含「編列說明」與「用途明細表」兩節）。系統以兩節各自解析出的金額，於「基金＋一級＋二級科目」層級比對，列出<strong>兩節金額不一致</strong>或<strong>僅一節出現</strong>的科目，提醒您人工複核。此為提醒非稽核：兩節粒度不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常。</p>
+                <p class="step-description">上傳<strong>同一份</strong>預算書 PDF（同時含「編列說明」與「用途明細表」兩節）。系統以兩節各自解析出的金額，於「基金＋計畫(含子計畫)＋一級＋二級科目」層級比對，金額以<strong>千元</strong>顯示，列出<strong>兩節金額不一致</strong>或<strong>僅一節出現</strong>的科目，提醒您人工複核。此為提醒非稽核：兩節粒度不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常。</p>
                 <div class="controls">
                     <label for="fileInputR" class="file-label">選擇 PDF 檔案</label>
                     <input type="file" id="fileInputR" accept=".pdf">
@@ -1267,7 +1267,7 @@
                 for (const r of nrows) {
                     // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
                     if (r.isSubtotal && r.l2Item) continue;
-                    const plan = r.planTop || '';
+                    const plan = r.plan || '';   // 對到子計畫層(完整計畫路徑)，只對到大計畫時差異很難追
                     if (!r.l2Item) {
                         // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
                         // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
@@ -1313,7 +1313,7 @@
                 for (const r of dres.rows) {
                     const amt = r.amounts['本年度預算'];
                     if (!amt || !r.l2) continue;
-                    const plan = (r.plan || '').split(' - ')[0];
+                    const plan = r.plan || '';
                     const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
                     if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
@@ -1324,35 +1324,75 @@
                 }
                 const keys = new Set([...nMap.keys(), ...dMap.keys()]);
                 const diff = [], onlyOne = [], ok = [];
+                // 逐層退讓比對。先用完整計畫路徑(含所有子計畫層)比；對不上的殘留，改用
+                // 少一層的計畫路徑加總再比，一路退到大計畫層為止。
+                // 兩節的計畫層級深度常不同——用途明細表對某些基金只列到第二層(實測農村再生
+                // 基金即是：明細表最深只到「一、農村再生社區發展及環境改善」，第三層子計畫
+                // 只出現在編列說明)——直接丟進「僅一節出現」會製造大量假差異，退到「兩節都
+                // 有的最深層」才既對得上、又把差異鎖在盡量小的範圍。
+                let rest = [];
                 for (const k of keys) {
                     const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
                     const row = { ...meta.get(k), n, d };
-                    if (n != null && d != null) (n === d ? ok : diff).push({ ...row, delta: n - d });
-                    else onlyOne.push(row);
+                    if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
+                    rest.push(row);
                 }
+                const depthOf = r => (r.plan || '').split(' - ').length;
+                for (let depth = Math.max(1, ...rest.map(depthOf)) - 1; depth >= 1 && rest.length; depth--) {
+                    const gN = new Map(), gD = new Map(), gMeta = new Map(), members = new Map();
+                    for (const row of rest) {
+                        const plan = (row.plan || '').split(' - ').slice(0, depth).join(' - ');
+                        const gk = row.fund + '|' + _akey(plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
+                        const isN = row.n != null, v = isN ? row.n : row.d;
+                        (isN ? gN : gD).set(gk, ((isN ? gN : gD).get(gk) || 0) + v);
+                        if (!gMeta.has(gk)) { gMeta.set(gk, { fund: row.fund, plan, l1: row.l1, l2: row.l2, parts: [] }); members.set(gk, []); }
+                        // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
+                        gMeta.get(gk).parts.push({ plan: row.plan, side: isN ? '說明' : '明細', v });
+                        members.get(gk).push(row);
+                    }
+                    const next = [];
+                    for (const gk of new Set([...gN.keys(), ...gD.keys()])) {
+                        const n = gN.has(gk) ? gN.get(gk) : null, d = gD.has(gk) ? gD.get(gk) : null;
+                        if (n == null || d == null) { next.push(...members.get(gk)); continue; }   // 這層仍只有一節 → 再退一層
+                        const row = { ...gMeta.get(gk), n, d, rollup: depth };
+                        (n === d ? ok : diff).push({ ...row, delta: n - d });
+                    }
+                    rest = next;
+                }
+                onlyOne.push(...rest);   // 退到大計畫層仍只有一節出現
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
-                const fundDiff = [...new Set(diff.map(r => r.fund))].sort().map(f => `${f.replace(/基金$/, '')} ${diff.filter(r => r.fund === f).length}`).join('、');
-                show('statusMessageR', `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。${fundDiff ? '不一致分布：' + fundDiff + '。' : ''}請優先核對「金額不一致」。`);
+                show('statusMessageR', _reconcileSummary(diff, onlyOne, ok));
             } catch (e) { console.error(e); show('errorOutputR', '對帳失敗：' + e.message); }
             finally { el('extractBtnR').disabled = false; }
         }
 
         function _renderReconcile(diff, onlyOne, ok) {
-            const fmt = v => v == null ? '—' : v.toLocaleString();
+            // 顯示單位千元：預算書原文就是千元，換算回去才好直接跟 PDF 文字對讀
+            const fmt = v => v == null ? '—' : (v / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 });
             const cont = document.getElementById('tableContainerR');
             diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
+            const amtTd = v => `<td style="text-align:right;white-space:nowrap;">${fmt(v)}</td>`;
             const rowH = (r, showDelta) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
-                <td>${escapeHtml(r.plan)}</td>
+                <td>${escapeHtml((r.plan || '').split(' - ')[0])}</td>
+                <td>${escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}${r.rollup
+                    ? `<div style="color:#6c757d;font-size:12px;margin-top:2px;">（更細層兩節對不齊，比到第 ${r.rollup} 層計畫；下列為併入的更細層計畫）</div>` : ''}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
-                <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
-                <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
-                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + r.delta.toLocaleString()}</td>` : '<td></td>'}
-             </tr>`;
-            const head = '<thead><tr><th>基金</th><th>計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額</th><th>用途明細表金額</th><th>差額(編列說明−用途明細表)</th></tr></thead>';
+                ${amtTd(r.n)}${amtTd(r.d)}
+                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>` : '<td></td>'}
+             </tr>`
+                // 併入的更細層計畫各自成一列：金額落在自己那一節的欄位，另一節沒有就留空白，
+                // 一眼看得出缺口在哪個子計畫。擠在同一格裡看不出來。
+                + (r.rollup ? r.parts.map(p => `<tr style="color:#6c757d;font-size:13px;">
+                    <td></td><td></td>
+                    <td style="padding-left:18px;">└ ${escapeHtml((p.plan || '').split(' - ').slice(r.rollup).join(' - ') || '(無更細層)')}</td>
+                    <td></td><td></td>
+                    ${amtTd(p.side === '說明' ? p.v : null)}${amtTd(p.side === '明細' ? p.v : null)}
+                    <td></td></tr>`).join('') : '');
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>子計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
             const section = (title, note, list, showDelta) => list.length ? `
                 <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
                 <p class="step-description" style="margin:0 0 8px;">${note}</p>
@@ -1385,11 +1425,20 @@
             sel.style.display = funds.length > 1 ? '' : 'none';
         }
 
+        function _reconcileSummary(diff, onlyOne, ok) {
+            const fundDiff = [...new Set(diff.map(r => r.fund))].sort().map(f => `${f.replace(/基金$/, '')} ${diff.filter(r => r.fund === f).length}`).join('、');
+            return `對帳完成：不一致 ${diff.length}、僅一節 ${onlyOne.length}、相符 ${ok.length}。${fundDiff ? '不一致分布：' + fundDiff + '。' : ''}請優先核對「金額不一致」。`;
+        }
+
         function _filterReconcile() {
             const fund = document.getElementById('fundFilterR').value;
             const { diff, onlyOne, ok } = _reconcileData;
             const filter = arr => fund ? arr.filter(r => r.fund === fund) : arr;
             _renderReconcile(filter(diff), filter(onlyOne), filter(ok));
+            // 統計列不跟著篩就會一直顯示全部基金的數字，看起來像篩選沒作用
+            const st = document.getElementById('statusMessageR');
+            st.textContent = (fund ? fund + ' — ' : '') + _reconcileSummary(filter(diff), filter(onlyOne), filter(ok));
+            st.style.display = 'block';
         }
 
         function _expandItem(it) {
@@ -1720,7 +1769,7 @@
         }
 
         function _parseDetailItems(items, fund, out, st, isDecal) {
-            for (const { name, amounts } of items) {
+            for (let { name, amounts } of items) {
                 if (!name || _HEAD_NAMES.includes(name)) continue;
                 if (/預算數|決算數|比較增減|計畫內容/.test(name)) continue;  // 頁尾說明註解/表頭殘留
                 const cleanN = name.replace(/[\s　]/g, '');
@@ -1732,6 +1781,9 @@
                     st.p1 = st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = '';
                     continue;  // 分基金合計行本身不輸出
                 }
+                // 明細表的計畫名右端可能黏到頁碼（如「…預警體系計畫5-28」），不剝除會讓
+                // 同一個計畫在兩節被當成不同計畫。只對計畫名做，科目名不會以此形式結尾。
+                name = name.replace(/[\s　]*[0-9]{1,3}[-－‐–—][0-9]{1,3}[\s　]*$/, '');
                 let level, displayName = name;
                 // 計畫標號偵測（預算書/決算書皆適用）
                 if (_planL1Regex.test(name)) { st.p1 = name.replace(_planL1Regex, '').trim(); st.p2 = st.p3 = st.l1 = st.l2 = st.l3 = ''; level = '計畫'; }
