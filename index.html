@@ -279,6 +279,12 @@
         ui.fileInput.addEventListener('change', () => { ui.fileNameDisplay.textContent = (ui.fileInput.files && ui.fileInput.files.length > 0) ? `已選擇：${ui.fileInput.files[0].name}` : '尚未選擇檔案'; });
         function showMessage(element, text) { hideMessages(); element.textContent = text; element.style.display = 'block'; }
         function hideMessages() { ui.statusMessage.style.display = 'none'; ui.errorOutput.style.display = 'none'; }
+        // Tab2/Tab3 訊息列（id 為 statusMessage/errorOutput + 分頁後綴）：show('statusMessage'|'errorOutput', text)
+        const _tabShow = sfx => (kind, text) => {
+            for (const k of ['statusMessage', 'errorOutput']) document.getElementById(k + sfx).style.display = 'none';
+            const e = document.getElementById(kind + sfx);
+            e.textContent = text; e.style.display = 'block';
+        };
 
         async function extractPdfText() {
             hideMessages();
@@ -289,8 +295,6 @@
             const file = ui.fileInput.files[0]; const typedarray = new Uint8Array(await file.arrayBuffer());
             try {
                 const pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
-                const SECTION_MARKER = '基金用途明細表說明';
-                const Y_TOLERANCE = 3;
                 const pageFrom = parseInt(document.getElementById('pageFrom').value, 10) || 0;
                 const pageTo = parseInt(document.getElementById('pageTo').value, 10) || 0;
                 const useRange = pageFrom >= 1 && pageTo >= pageFrom;
@@ -299,52 +303,20 @@
                 const pageLinesList = [];
                 for (let i = firstPage; i <= lastPage; i++) {
                     showMessage(ui.statusMessage, `正在處理第 ${i} / ${pdfDoc.numPages} 頁...`);
-                    const page = await pdfDoc.getPage(i); const textContent = await page.getTextContent();
-                    const items = textContent.items;
-                    // O(n) single-pass clustering using sorted-by-y approach
-                    const sorted = items.map(it => ({ y: it.transform[5], x: it.transform[4], str: it.str }))
-                        .sort((a, b) => b.y - a.y);
-                    const groups = [];
-                    for (const s of sorted) {
-                        if (groups.length > 0 && Math.abs(groups[groups.length - 1].yRef - s.y) <= Y_TOLERANCE) {
-                            groups[groups.length - 1].items.push(s);
-                        } else {
-                            groups.push({ yRef: s.y, items: [s] });
-                        }
-                    }
-                    const lines = groups.map(g => {
-                        g.items.sort((a, b) => a.x - b.x);
-                        return g.items.map(it => it.str).join('');
-                    });
-                    pageLinesList.push(lines);
+                    pageLinesList.push(_pageLineStrs((await (await pdfDoc.getPage(i)).getTextContent()).items));
                 }
                 // 使用者指定頁碼範圍時直接採用；否則只保留頁首含「基金用途明細表說明」的頁
                 // （頁首需整行等於標記（去空白），避免誤抓目次頁；無任何頁符合時退回全部頁面）。
-                const inSection = lines => lines.slice(0, 6).some(ln => ln.replace(/[\s　]/g, '') === SECTION_MARKER);
                 let usedPages, sectionNote;
                 if (useRange) {
                     usedPages = pageLinesList;
                     sectionNote = `（第 ${firstPage} 到 ${lastPage} 頁，共 ${usedPages.length} 頁）`;
                 } else {
-                    const selected = pageLinesList.filter(inSection);
+                    const selected = pageLinesList.filter(_inSection);
                     usedPages = selected.length ? selected : pageLinesList;
                     sectionNote = selected.length ? `（自動篩選出「${SECTION_MARKER}」章節 ${selected.length} / ${pdfDoc.numPages} 頁）` : '';
                 }
-                // 每頁頁首「基金用途明細表說明」上一行即基金名稱；基金交界處插入標記行
-                const fundOfPage = lines => {
-                    const head = lines.slice(0, 6).map(l => l.replace(/[\s　]/g, ''));
-                    const i = head.indexOf(SECTION_MARKER);
-                    return (i >= 1 && head[i - 1]) ? head[i - 1] : '';
-                };
-                let prevFund = '';
-                const outParts = [];
-                for (const lines of usedPages) {
-                    const f = fundOfPage(lines) || prevFund;   // 基金名須在剝除頁首前取出
-                    if (f && f !== prevFund) outParts.push(FUND_MARK + f);
-                    prevFund = f;
-                    outParts.push((useRange ? lines : _stripPageHead(lines)).join('\n'));
-                }
-                ui.outputArea.value = outParts.join('\n').trim();
+                ui.outputArea.value = _joinFundPages(usedPages, !useRange);
                 const funds = [...new Set([...ui.outputArea.value.matchAll(new RegExp('^' + FUND_MARK + '(.+)$', 'gm'))].map(m => m[1]))];
                 const fundNote = funds.length > 1 ? `（辨識出 ${funds.length} 個基金：${funds.join('、')}）` : (funds.length === 1 ? `（基金：${funds[0]}）` : '');
                 ui.convertBtn.disabled = false;
@@ -1276,27 +1248,46 @@
         const _HEAD_LINES = 4;
         const _stripPageHead = lines => lines.slice(_HEAD_LINES);
 
+        // ----- PDF 頁面共用：依 y 分行、章節/基金名判定 -----
+        const SECTION_MARKER = '基金用途明細表說明';
+        const _Y_TOL = 3;
+        // 依 y 分行（容差 _Y_TOL），行內依 x 排序；輸入/輸出皆為 {x,y,str} 點
+        const _groupLines = pts => {
+            const groups = [];
+            for (const s of [...pts].sort((a, b) => b.y - a.y)) {
+                const g = groups[groups.length - 1];
+                if (g && Math.abs(g.y - s.y) <= _Y_TOL) g.items.push(s);
+                else groups.push({ y: s.y, items: [s] });
+            }
+            return groups.map(g => g.items.sort((a, b) => a.x - b.x));
+        };
+        // pdf.js textContent.items → 每頁一個字串陣列（一行一字串）
+        const _pageLineStrs = items => _groupLines(items.map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str })))
+            .map(line => line.map(it => it.str).join(''));
+        const _pageHead = lines => lines.slice(0, 6).map(l => l.replace(/[\s　]/g, ''));
+        const _inSection = lines => _pageHead(lines).includes(SECTION_MARKER);
+        // 每頁頁首「基金用途明細表說明」上一行即基金名稱
+        const _fundOfPage = lines => { const h = _pageHead(lines); const i = h.indexOf(SECTION_MARKER); return (i >= 1 && h[i - 1]) ? h[i - 1] : ''; };
+        // 串接各頁文字；基金交界處插入 FUND_MARK 標記行（基金名須在剝除頁首前取出）
+        const _joinFundPages = (pages, stripHead) => {
+            let prev = ''; const out = [];
+            for (const lines of pages) {
+                const f = _fundOfPage(lines) || prev;
+                if (f && f !== prev) out.push(FUND_MARK + f);
+                prev = f;
+                out.push((stripHead ? _stripPageHead(lines) : lines).join('\n'));
+            }
+            return out.join('\n').trim();
+        };
+
         // 純抽取「編列說明」章節文字(含 FUND_MARK)，與 extractPdfText 同法(自動抓章節、不含頁碼範圍)
         async function _extractNarrativeText(pdfDoc) {
-            const SECTION_MARKER = '基金用途明細表說明', Y = 3;
             const pageLinesList = [];
             for (let i = 1; i <= pdfDoc.numPages; i++) {
-                const items = (await (await pdfDoc.getPage(i)).getTextContent()).items;
-                const sorted = items.map(it => ({ y: it.transform[5], x: it.transform[4], str: it.str })).sort((a, b) => b.y - a.y);
-                const groups = [];
-                for (const s of sorted) {
-                    if (groups.length && Math.abs(groups[groups.length - 1].yRef - s.y) <= Y) groups[groups.length - 1].items.push(s);
-                    else groups.push({ yRef: s.y, items: [s] });
-                }
-                pageLinesList.push(groups.map(g => { g.items.sort((a, b) => a.x - b.x); return g.items.map(it => it.str).join(''); }));
+                pageLinesList.push(_pageLineStrs((await (await pdfDoc.getPage(i)).getTextContent()).items));
             }
-            const inSection = ls => ls.slice(0, 6).some(ln => ln.replace(/[\s　]/g, '') === SECTION_MARKER);
-            const selected = pageLinesList.filter(inSection);
-            const used = selected.length ? selected : pageLinesList;
-            const fundOf = ls => { const h = ls.slice(0, 6).map(l => l.replace(/[\s　]/g, '')); const i = h.indexOf(SECTION_MARKER); return (i >= 1 && h[i - 1]) ? h[i - 1] : ''; };
-            let prev = ''; const out = [];
-            for (const ls of used) { const f = fundOf(ls) || prev; if (f && f !== prev) out.push(FUND_MARK + f); prev = f; out.push(_stripPageHead(ls).join('\n')); }
-            return out.join('\n').trim();
+            const selected = pageLinesList.filter(_inSection);
+            return _joinFundPages(selected.length ? selected : pageLinesList, true);
         }
 
         // 一鍵清理(純字串)：暫借文字區跑既有清理函式後還原，避免重寫邏輯
@@ -1315,12 +1306,12 @@
 
         async function runReconcile() {
             const el = id => document.getElementById(id);
-            const show = (n, t) => { el('statusMessageR').style.display = 'none'; el('errorOutputR').style.display = 'none'; el(n).textContent = t; el(n).style.display = 'block'; };
+            const show = _tabShow('R');
             const fi = el('fileInputR');
-            if (!fi.files || !fi.files.length) { show('errorOutputR', '請先選擇 PDF。'); return; }
+            if (!fi.files || !fi.files.length) { show('errorOutput', '請先選擇 PDF。'); return; }
             el('extractBtnR').disabled = true;
             try {
-                show('statusMessageR', '解析中...');
+                show('statusMessage', '解析中...');
                 const buf = new Uint8Array(await fi.files[0].arrayBuffer());
                 const doc = await pdfjsLib.getDocument({ data: buf }).promise;
                 // 說明版
@@ -1331,7 +1322,7 @@
                 // 沒有明細側就沒有對照組。少了這道檢查，說明版的每一列都會落進「僅一節出現」，
                 // 畫面顯示「不一致 0、相符 0」——讀起來像對得很乾淨，其實是根本沒對到東西。
                 if (!dres.rows.length) {
-                    show('errorOutputR', '這份 PDF 沒有解析到「用途明細表」的數字細表頁，無法對帳。'
+                    show('errorOutput', '這份 PDF 沒有解析到「用途明細表」的數字細表頁，無法對帳。'
                         + `（編列說明側解析到 ${nrows.length} 列）對帳需要同時含兩節的完整預算書。`);
                     return;
                 }
@@ -1486,8 +1477,8 @@
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
-                show('statusMessageR', _reconcileSummary(diff, onlyOne, ok));
-            } catch (e) { console.error(e); show('errorOutputR', '對帳失敗：' + e.message); }
+                show('statusMessage', _reconcileSummary(diff, onlyOne, ok));
+            } catch (e) { console.error(e); show('errorOutput', '對帳失敗：' + e.message); }
             finally { el('extractBtnR').disabled = false; }
         }
 
@@ -1640,17 +1631,8 @@
         }
 
         function _detailLines(items) {
-            // 依 y 分行；每行 [{x,str}] 依 x 排序
-            const Y_TOL = 3;
-            const sorted = items.flatMap(it => _expandItem(it).map(sub => ({ x: sub.x, y: it.transform[5], str: sub.str })))
-                .sort((a, b) => b.y - a.y);
-            const groups = [];
-            for (const s of sorted) {
-                const g = groups.length ? groups[groups.length - 1] : null;
-                if (g && Math.abs(g.y - s.y) <= Y_TOL) g.items.push(s);
-                else groups.push({ y: s.y, items: [s] });
-            }
-            return groups.map(g => g.items.sort((a, b) => a.x - b.x));
+            // 依 y 分行；每行 [{x,str}] 依 x 排序（細表需保留 x，故先展開再分行）
+            return _groupLines(items.flatMap(it => _expandItem(it).map(sub => ({ x: sub.x, y: it.transform[5], str: sub.str }))));
         }
 
         function _detailColumns(lines) {
@@ -1813,23 +1795,23 @@
 
         async function parseDetailPdf() {
             const el = id => document.getElementById(id);
-            const show = (n, t) => { el('statusMessageD').style.display = 'none'; el('errorOutputD').style.display = 'none'; el(n).textContent = t; el(n).style.display = 'block'; };
+            const show = _tabShow('D');
             const fi = el('fileInputD');
-            if (!fi.files || !fi.files.length) { show('errorOutputD', '請先選擇 PDF。'); return; }
+            if (!fi.files || !fi.files.length) { show('errorOutput', '請先選擇 PDF。'); return; }
             el('extractBtnD').disabled = true;
             try {
                 _detailSources = [];
                 for (const file of fi.files) {
                     const buf = new Uint8Array(await file.arrayBuffer());
                     const doc = await pdfjsLib.getDocument({ data: buf }).promise;
-                    const res = await parseDetailDoc(doc, (i, n) => show('statusMessageD', `${file.name}：第 ${i}/${n} 頁...`));
+                    const res = await parseDetailDoc(doc, (i, n) => show('statusMessage', `${file.name}：第 ${i}/${n} 頁...`));
                     if (res.rows.length) { res.fileName = file.name; _detailSources.push(res); }
                 }
-                if (!_detailSources.length) { show('errorOutputD', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
+                if (!_detailSources.length) { show('errorOutput', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }
                 _detailView = { merged: false, idx: 0 };
                 renderDetail();
-                show('statusMessageD', `完成：載入 ${_detailSources.length} 個來源。單一檢視用「來源」下拉；多本同單位可勾「並排比較」。`);
-            } catch (e) { console.error(e); show('errorOutputD', '解析失敗：' + e.message); }
+                show('statusMessage', `完成：載入 ${_detailSources.length} 個來源。單一檢視用「來源」下拉；多本同單位可勾「並排比較」。`);
+            } catch (e) { console.error(e); show('errorOutput', '解析失敗：' + e.message); }
             finally { el('extractBtnD').disabled = false; }
         }
 
