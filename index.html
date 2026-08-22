@@ -76,6 +76,28 @@
         .tab-btn.active { background: #0056b3; color: #fff; }
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
+        /* ── 對帳（Tab 3）雙欄對齊呈現 ── */
+        .recon-item { margin: 6px 0; border: 1px solid #dee2e6; border-radius: 6px; background: #fff; }
+        .recon-item summary { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: baseline; padding: 8px 12px; cursor: pointer; list-style: none; }
+        .recon-item summary::-webkit-details-marker { display: none; }
+        .recon-item summary::before { content: '▸ '; color: #0056b3; }
+        .recon-item[open] summary::before { content: '▾ '; }
+        .recon-item[open] summary { border-bottom: 1px solid #e9ecef; }
+        .recon-fund { font-weight: 600; white-space: nowrap; }
+        .recon-plan { color: #495057; min-width: 120px; }
+        .recon-acct { color: #6c757d; }
+        .recon-amt { font-variant-numeric: tabular-nums; }
+        .recon-delta { font-weight: 700; white-space: nowrap; }
+        .recon-body { padding: 10px 12px; overflow-x: auto; }
+        .recon-pair-head { font-size: 12px; color: #6c757d; margin-bottom: 6px; }
+        .recon-pair { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .recon-pair th, .recon-pair td { border: 1px solid #e8ecf0; padding: 5px 8px; text-align: left; vertical-align: top; }
+        .recon-pair th { background: #f4f6f8; color: #495057; font-weight: 600; }
+        .recon-pair .recon-amt { text-align: right; white-space: nowrap; }
+        .recon-pair tr.recon-sum td { font-weight: 700; background: #f4f6f8; border-top: 2px solid #dee2e6; }
+        .recon-desc { color: #8b949e; font-size: 12px; margin-top: 2px; max-width: 420px; }
+        .recon-desc::before { content: '說明：'; color: #adb5bd; }
+        .recon-missing { color: #adb5bd; text-align: center; }
     </style>
 <!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-GHGBM401HN"></script>
@@ -562,6 +584,28 @@
             return out;
         };
 
+        // 一句列多科目＋合共：以「金額前的文字片段」回推科目。片段右緣必須與科目名對齊——
+        // 科目名是片段後綴（可含 、及 內嵌的長名，如「現金、存款及貨物保險費」；名前可帶
+        // 「之／等／勞務承攬31人」等贅詞），或片段是科目名的後綴（名被截斷，如
+        // 「交通及運輸設備」←「購置交通及運輸設備」），最後才接受片段中段的科目名
+        // （名稱後接「分攤1人」等說明）。首筆金額只走第一條：母列「－編列N千元」的 N
+        // 是總額不是子項，寬鬆比對會把它誤當子項。
+        const _chunkAccount = (chunk, isFirst) => {
+            const c = _normalize(chunk);
+            if (!c) return null;
+            for (const it of _chart) {                                       // 由長到短
+                if (it.norm.length >= 2 && c.endsWith(it.norm)) return { code: it.code, name: it.name, loose: false };
+            }
+            if (isFirst) return null;
+            for (const it of _chart) {
+                if (it.norm.length >= 3 && c.length >= 2 && it.norm.endsWith(c)) return { code: it.code, name: it.name, loose: true };
+            }
+            for (const it of _chart) {
+                if (it.norm.length >= 3 && c.includes(it.norm)) return { code: it.code, name: it.name, loose: true };
+            }
+            return null;
+        };
+
         // 預算別：同一計畫下的預算來源區分（原年度預算 vs 災後復原特別預算），非子計畫也非科目
         const _budgetType = (s) => {
             const t = s.trim();
@@ -890,6 +934,54 @@
                         }
                     }
                 }
+
+                // 一句列多科目＋合共（TODO B）：「郵費3,225千元、電話費4,800千元及
+                // 數據通信費3,386千元，合共11,411千元。」母列已確證匹配(二/三級)，句中另有
+                // ≥2 個「科目名＋N千元」子項，句尾「合共N千元」為小計。拆成多列子項、母列
+                // 標 isSubtotal。與上方內嵌拆列互斥：那個只收「本列無二級」(L1 母列)，
+                // 這個只收二/三級母列。
+                // 安全閥（關鍵）：僅當「子項金額加總 === 合共金額」才拆，對不上就維持原狀——
+                // 子項金額全部出自原文，加總對得上代表拆解沒有漏項或多算。
+                if (matched && !matched.inferred && (rowL2 || rowL3) && amount
+                    && /合共\s*[\d,]+\s*千\s*元/.test(line)) {
+                    const kids = [];
+                    let cpos = 0, ai = 0;
+                    for (const m of line.matchAll(/([\d,]+)\s*千\s*元/g)) {
+                        const chunk = line.slice(cpos, m.index);
+                        cpos = m.index + m[0].length;
+                        if (!chunk.trim()) { ai++; continue; }
+                        const acc = _chunkAccount(chunk, ai === 0);
+                        ai++;
+                        if (!acc) continue;
+                        // 子項必須與母列同宗：三級母列收「同二級下的三級」；一/二級母列收其下更深層
+                        const rc = currentCode;
+                        const related = rc.length === 3
+                            ? acc.code.length === 3 && acc.code.slice(0, 2) === rc.slice(0, 2)
+                            : acc.code.length > rc.length && acc.code.slice(0, rc.length) === rc.slice(0, rc.length);
+                        if (!related) continue;
+                        kids.push({ code: acc.code, amount: parseInt(m[1].replace(/,/g, ''), 10) * 1000, frag: chunk.trim(), loose: acc.loose });
+                    }
+                    const total = kids.reduce((s, p) => s + p.amount, 0);
+                    if (kids.length >= 2 && total === amount) {
+                        baseRow.isSubtotal = true;                  // 母列＝小計，彙總時不重複計入
+                        for (const p of kids) {
+                            rows.push({
+                                ...baseRow,
+                                l1Item: _codeToName.get(p.code[0]) || rowL1,
+                                l2Item: _codeToName.get(p.code.slice(0, 2)) || '',
+                                l3Item: p.code.length >= 3 ? (_codeToName.get(p.code) || '') : '',
+                                amount: p.amount,
+                                description: p.frag,
+                                raw: p.frag,
+                                code: p.code,
+                                confirmed: true,       // 金額出自原文；科目名由右緣比對（loose 者以黃底標示）
+                                accountFilled: p.loose,
+                                isSubtotal: false,
+                                derived: true          // 由母列拆出
+                            });
+                        }
+                    }
+                }
             }
 
             // 依科目順序後處理(不動主迴圈)：每個孤兒句取同計畫「前確定科目A」「後確定科目C」
@@ -903,7 +995,9 @@
             ];
             for (let i = 0; i < rows.length; i++) {
                 const r = rows[i];
-                if (r.confirmed) continue;
+                // derived（拆出的子列）也跳過：科目與金額在拆列當下已正確歸戶，
+                // 不可再當「待補」主體被鄰居的 A==C 規則重寫。
+                if (r.confirmed || r.derived) continue;
                 let A = null, C = null;
                 // 拆出的子列(derived)是解析器合成、插進文件流的，不可充當順序錨點，
                 // 否則其科目會被套到後續「用途活動句」上，造成同一筆錢重複計入。
@@ -943,9 +1037,10 @@
         //   lv1   母列＝「…－編列X千元，包括：」其下另有明細列 → 加粗灰底
         //   orphan 孤兒句＝原文沒寫二/三級科目名，歸不了戶、對帳時會被略過 → 淡黃底待人工歸戶
         function _rowKind(row) {
-            if (row.isSubtotal && !row.description) return 'lv1';   // 解析器補出的母列(一級或二級)
+            if (row.isSubtotal) return 'lv1';   // 母列一律加粗灰底：補出的一/二級母列、內嵌拆列母列、
+                                                // 「合共」拆列母列（金額＝其下子項小計，加總時要濾掉）
             if (!row.l1Item || row.l2Item || row.l3Item) return '';
-            if (row.isSubtotal || _SUBTOTAL_HINT.test(row.description || '')) return 'lv1';
+            if (_SUBTOTAL_HINT.test(row.description || '')) return 'lv1';
             return row.amount ? 'orphan' : 'lv1';
         }
 
@@ -1243,6 +1338,10 @@
                 const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
                 // 彙總到 基金|一級|二級
                 const nMap = new Map(), dMap = new Map(), meta = new Map();
+                // 兩側「計入」的原始明細列（key → [{l1,l2,l3,amount,desc,plan}]），
+                // 供對帳結果展開時做雙欄對齊——只記實際計入彙總的列，母列/被跳過的明細不記。
+                const nDet = new Map(), dDet = new Map();
+                const detPush = (m, k, item) => { if (!m.has(k)) m.set(k, []); m.get(k).push(item); };
                 // 說明版二級金額：優先採用原文寫明的二級合計(如「－捐助、補助與獎助－編列15,241千元」)，
                 // 沒寫合計的基金才退回加總三級明細。兩者不混用，從根本避免小計與明細重複相加。
                 // 以「區塊」為單位：同一二級科目可能有多個區塊，有的寫了合計、有的只列三級明細。
@@ -1252,17 +1351,23 @@
                 // 母標題句被跳過、其下子句卻全是孤兒(無科目名)時，整個區塊會兩邊都沒算。
                 // 記住該母句金額，等區塊結束仍無任何列計入才補上。限 confirmed(科目名原文
                 // 明寫)——推論來的母句若其 key 在明細側不存在，補上去反而憑空造出單邊差異。
-                let pendingHeader = 0, blockCounted = false;
+                let pendingHeader = 0, pendingRow = null, blockCounted = false;
                 const flushBlock = () => {
                     if (pendingHeader && !blockCounted && curKey) {
                         nMap.set(curKey, (nMap.get(curKey) || 0) + pendingHeader);
+                        const m = meta.get(curKey);
+                        if (m && pendingRow) detPush(nDet, curKey, {
+                            l3: '', l2: m.l2, l1: m.l1, amount: pendingHeader,
+                            desc: pendingRow.description || '', plan: pendingRow.plan || '',
+                        });
                     }
-                    pendingHeader = 0; blockCounted = false;
+                    pendingHeader = 0; pendingRow = null; blockCounted = false;
                 };
-                const addTo = (fund, plan, l1, l2, v) => {
+                const addTo = (fund, plan, l1, l2, v, row, l3name) => {
                     const kk = fund + '|' + _akey(plan) + '|' + _akey(l1) + '|' + _akey(l2);
                     nMap.set(kk, (nMap.get(kk) || 0) + v);
                     if (!meta.has(kk)) meta.set(kk, { fund, plan, l1, l2 });
+                    if (row) detPush(nDet, kk, { l3: l3name || '', l2, l1, amount: v, desc: row.description || '', plan: row.plan || '' });
                 };
                 for (const r of nrows) {
                     // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
@@ -1279,7 +1384,8 @@
                             for (const p of _inlinePairs(r.description)) {
                                 const l2n = _codeToName.get(p.code.slice(0, 2));
                                 if (!l2n) continue;
-                                addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount);
+                                const l3n = p.code.length >= 3 ? (_codeToName.get(p.code) || '') : '';
+                                addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount, r, l3n);
                             }
                         }
                         flushBlock();
@@ -1291,18 +1397,22 @@
                     if (!r.amount) continue;
                     if (r.derived) {                 // 由母列拆出的子列：母列已排除，無條件計入且不影響區塊判斷
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                        detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
                         blockCounted = true;
                         continue;
                     }
                     if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                        detPush(nDet, k, { l3: '', l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
                         blockHasHeader = true;
                         blockCounted = true;
                     } else if (r.l3Item && !blockHasHeader && !_SUBTOTAL.test(r.description)) {
                         nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
+                        detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
                         blockCounted = true;
                     } else if (r.l3Item && r.confirmed && _SUBTOTAL.test(r.description)) {
                         pendingHeader += r.amount;                     // 母標題句：子句都歸不了戶時才補計
+                        pendingRow = r;
                     }
                 }
                 flushBlock();   // 收尾：最後一個區塊
@@ -1318,6 +1428,7 @@
                     if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
                     if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
                     else dLeaf.set(k, (dLeaf.get(k) || 0) + amt * factor);
+                    detPush(dDet, k, { l3: r.l3 || '', l2: r.l2, l1: r.l1, amount: amt * factor, desc: '', plan });
                 }
                 for (const k of new Set([...dHdr.keys(), ...dLeaf.keys()])) {
                     dMap.set(k, dHdr.has(k) ? dHdr.get(k) : dLeaf.get(k));
@@ -1333,13 +1444,14 @@
                 let rest = [];
                 for (const k of keys) {
                     const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
-                    const row = { ...meta.get(k), n, d };
+                    const row = { ...meta.get(k), n, d, nRows: nDet.get(k) || [], dRows: dDet.get(k) || [] };
                     if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
                     rest.push(row);
                 }
                 const depthOf = r => (r.plan || '').split(' - ').length;
                 for (let depth = Math.max(1, ...rest.map(depthOf)) - 1; depth >= 1 && rest.length; depth--) {
                     const gN = new Map(), gD = new Map(), gMeta = new Map(), members = new Map();
+                    const gNDet = new Map(), gDDet = new Map();   // 退讓時原始明細跟著併到淺層 key
                     for (const row of rest) {
                         const plan = (row.plan || '').split(' - ').slice(0, depth).join(' - ');
                         const gk = row.fund + '|' + _akey(plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
@@ -1349,15 +1461,26 @@
                         // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
                         gMeta.get(gk).parts.push({ plan: row.plan, side: isN ? '說明' : '明細', v });
                         members.get(gk).push(row);
+                        // 原始明細列：完整 key 下的列併入淺層 key（展開時仍顯示各自的完整計畫路徑）
+                        const src = (isN ? nDet : dDet).get(row.fund + '|' + _akey(row.plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2)) || [];
+                        for (const it of src) {
+                            const m = isN ? gNDet : gDDet;
+                            if (!m.has(gk)) m.set(gk, []);
+                            m.get(gk).push(it);
+                        }
                     }
                     const next = [];
                     for (const gk of new Set([...gN.keys(), ...gD.keys()])) {
                         const n = gN.has(gk) ? gN.get(gk) : null, d = gD.has(gk) ? gD.get(gk) : null;
                         if (n == null || d == null) { next.push(...members.get(gk)); continue; }   // 這層仍只有一節 → 再退一層
-                        const row = { ...gMeta.get(gk), n, d, rollup: depth };
+                        const row = { ...gMeta.get(gk), n, d, rollup: depth, nRows: gNDet.get(gk) || [], dRows: gDDet.get(gk) || [] };
                         (n === d ? ok : diff).push({ ...row, delta: n - d });
                     }
                     rest = next;
+                }
+                for (const r of rest) {   // 退到大計畫層仍只有一節：附上兩側原始明細
+                    const fullK = r.fund + '|' + _akey(r.plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
+                    r.nRows = nDet.get(fullK) || []; r.dRows = dDet.get(fullK) || [];
                 }
                 onlyOne.push(...rest);   // 退到大計畫層仍只有一節出現
                 _reconcileData = { diff, onlyOne, ok };
@@ -1374,32 +1497,94 @@
             const cont = document.getElementById('tableContainerR');
             diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
-            const amtTd = v => `<td style="text-align:right;white-space:nowrap;">${fmt(v)}</td>`;
-            const rowH = (r, showDelta) => `<tr>
+
+            // 兩側原始明細 → 依科目（正規化名）配對成「對齊行」：說明側順序為主，
+            // 明細側多出的列接在後。配對成功的同一行左右金額並排，一眼看出差異在哪個科目。
+            const alignPair = (nRows, dRows) => {
+                const rows = [];
+                const dUsed = new Set();
+                for (const r of nRows || []) {
+                    const nk = _akey(r.l3 || r.l2);
+                    let d = null;
+                    for (let i = 0; i < (dRows || []).length; i++) {
+                        if (dUsed.has(i)) continue;
+                        if (_akey(dRows[i].l3 || dRows[i].l2) === nk) { d = dRows[i].amount; dUsed.add(i); break; }
+                    }
+                    rows.push({ name: r.l3 || r.l2, n: r.amount, d, ndesc: r.desc, nplan: r.plan });
+                }
+                for (let i = 0; i < (dRows || []).length; i++) {
+                    if (dUsed.has(i)) continue;
+                    rows.push({ name: dRows[i].l3 || dRows[i].l2, n: null, d: dRows[i].amount, ndesc: '', dplan: dRows[i].plan });
+                }
+                return rows;
+            };
+            const deltaCell = (n, d) => {
+                if (n == null || d == null) return '<td class="recon-amt recon-missing">—</td>';
+                const dv = n - d;
+                const cls = dv > 0 ? 'diff-pos' : dv < 0 ? 'diff-neg' : 'diff-zero';
+                return `<td class="recon-amt ${cls}">${(dv > 0 ? '+' : '') + (dv / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>`;
+            };
+
+            // 每個比對項目＝可展開的卡片：summary 一覽（基金/計畫/科目/兩側金額/差額），
+            // 展開後是「編列說明側｜明細表側」的雙欄對齊明細＋合計行。
+            const itemHtml = (r, open) => {
+                const nRows = r.nRows || [], dRows = r.dRows || [];
+                const pair = alignPair(nRows, dRows);
+                const sumN = pair.reduce((s, x) => s + (x.n || 0), 0);
+                const sumD = pair.reduce((s, x) => s + (x.d || 0), 0);
+                const planTop = (r.plan || '').split(' - ')[0];
+                const planSub = (r.plan || '').split(' - ').slice(1).join(' - ');
+                const hasBoth = r.n != null && r.d != null;
+                const deltaCls = hasBoth ? (r.delta > 0 ? 'diff-pos' : r.delta < 0 ? 'diff-neg' : 'diff-zero') : '';
+                const deltaTxt = hasBoth ? (r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 }) : (r.n != null ? '僅說明有' : '僅明細有');
+                // rollup 時行內帶子計畫小字（該列屬於併入的更細層計畫）
+                const subTag = p => {
+                    if (!r.rollup || !p) return '';
+                    const sub = p.split(' - ').slice(r.rollup).join(' › ');
+                    return sub ? `<div style="color:#8b949e;font-size:11px;">└ ${escapeHtml(sub)}</div>` : '';
+                };
+                const body = `<div class="recon-body">
+                    ${r.rollup ? `<div class="recon-pair-head">⚠ 兩節計畫層級對不齊，比到第 ${r.rollup} 層計畫；下列為併入的更細層計畫的明細</div>` : ''}
+                    <table class="recon-pair"><thead><tr><th>科目（雙欄對齊）</th><th>編列說明側(千元)</th><th>明細表側(千元)</th><th>行差額</th></tr></thead>
+                    <tbody>
+                        ${pair.map(x => `<tr>
+                            <td>${escapeHtml(x.name)}${subTag(x.nplan || x.dplan)}${x.ndesc ? `<div class="recon-desc">${escapeHtml(x.ndesc)}</div>` : ''}</td>
+                            <td class="recon-amt">${fmt(x.n)}</td><td class="recon-amt">${fmt(x.d)}</td>${deltaCell(x.n, x.d)}
+                        </tr>`).join('')}
+                        <tr class="recon-sum"><td>合計</td><td class="recon-amt">${fmt(sumN)}</td><td class="recon-amt">${fmt(sumD)}</td>${deltaCell(sumN, sumD)}</tr>
+                    </tbody></table>
+                </div>`;
+                return `<details class="recon-item"${open ? ' open' : ''}>
+                    <summary>
+                        <span class="recon-fund">${escapeHtml(r.fund)}</span>
+                        <span class="recon-plan">${escapeHtml(planTop)}${planSub ? ' › ' + escapeHtml(planSub) : ''}</span>
+                        <span class="recon-acct">${escapeHtml(r.l1)}${r.l2 ? ' / ' + escapeHtml(r.l2) : ''}</span>
+                        <span class="recon-amt">說明 <b>${fmt(r.n)}</b></span>
+                        <span class="recon-amt">明細 <b>${fmt(r.d)}</b></span>
+                        <span class="recon-delta ${deltaCls}">${escapeHtml(deltaTxt)}</span>
+                    </summary>
+                    ${body}
+                </details>`;
+            };
+
+            const head = '<thead><tr><th>基金</th><th>計畫</th><th>子計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
+            // 相符項目維持緊湊表格（不展開——數量多，且金額已核對無虞）
+            const rowH = (r) => `<tr>
                 <td style="white-space:nowrap;">${escapeHtml(r.fund)}</td>
                 <td>${escapeHtml((r.plan || '').split(' - ')[0])}</td>
-                <td>${escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}${r.rollup
-                    ? `<div style="color:#6c757d;font-size:12px;margin-top:2px;">（更細層兩節對不齊，比到第 ${r.rollup} 層計畫；下列為併入的更細層計畫）</div>` : ''}</td>
+                <td>${escapeHtml((r.plan || '').split(' - ').slice(1).join(' - '))}</td>
                 <td>${escapeHtml(r.l1)}</td><td>${escapeHtml(r.l2)}</td>
-                ${amtTd(r.n)}${amtTd(r.d)}
-                ${showDelta ? `<td style="text-align:right;white-space:nowrap;" class="${r.delta > 0 ? 'diff-pos' : 'diff-neg'}">${(r.delta > 0 ? '+' : '') + (r.delta / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 })}</td>` : '<td></td>'}
-             </tr>`
-                // 併入的更細層計畫各自成一列：金額落在自己那一節的欄位，另一節沒有就留空白，
-                // 一眼看得出缺口在哪個子計畫。擠在同一格裡看不出來。
-                + (r.rollup ? r.parts.map(p => `<tr style="color:#6c757d;font-size:13px;">
-                    <td></td><td></td>
-                    <td style="padding-left:18px;">└ ${escapeHtml((p.plan || '').split(' - ').slice(r.rollup).join(' - ') || '(無更細層)')}</td>
-                    <td></td><td></td>
-                    ${amtTd(p.side === '說明' ? p.v : null)}${amtTd(p.side === '明細' ? p.v : null)}
-                    <td></td></tr>`).join('') : '');
-            const head = '<thead><tr><th>基金</th><th>計畫</th><th>子計畫</th><th>一級科目</th><th>二級科目</th><th>編列說明提取金額(千元)</th><th>用途明細表金額(千元)</th><th>差額(千元)</th></tr></thead>';
-            const section = (title, note, list, showDelta) => list.length ? `
-                <h3 style="margin:18px 0 6px;">${title}（${list.length}）</h3>
-                <p class="step-description" style="margin:0 0 8px;">${note}</p>
-                <table class="recon-table">${head}<tbody>${list.map(r => rowH(r, showDelta)).join('')}</tbody></table>` : '';
-            const onlyH = onlyOne.length ? `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#b8860b;">🟡 僅一節出現（${onlyOne.length}）— 多為計畫階層命名不一致或粒度差異，優先度低</summary>
+                <td style="text-align:right;white-space:nowrap;">${fmt(r.n)}</td>
+                <td style="text-align:right;white-space:nowrap;">${fmt(r.d)}</td>
+                <td></td>
+             </tr>`;
+            const diffH = diff.length ? `
+                <h3 style="margin:18px 0 6px;">🔴 金額不一致（${diff.length}）</h3>
+                <p class="step-description" style="margin:0 0 8px;">兩節皆有此（計畫＋二級科目）、但金額不同——最需優先人工核對。展開每筆可看「編列說明側｜明細表側」的科目對齊明細。</p>
+                ${diff.map(r => itemHtml(r, true)).join('')}` : '';
+            const onlyH = onlyOne.length ? `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#b8860b;">🟡 僅一節出現（${onlyOne.length}）— 多為計畫階層命名不一致或粒度差異，優先度低（展開看兩側原始明細）</summary>
                  <p class="step-description" style="margin:6px 0;">只有一節有此科目。「僅用途明細表有」多為正常(編列說明未描述)；「僅編列說明有」較需留意。計畫層級比對時此類偏多，屬命名對不齊的雜訊。</p>
-                 <table class="recon-table">${head}<tbody>${onlyOne.map(r => rowH(r, false)).join('')}</tbody></table></details>` : '';
+                 ${onlyOne.map(r => itemHtml(r, false)).join('')}</details>` : '';
             const fundSummary = (() => {
                 const funds = [...new Set([...diff, ...onlyOne, ...ok].map(r => r.fund).filter(Boolean))].sort();
                 if (funds.length < 2) return '';
@@ -1412,10 +1597,10 @@
                 return `<table class="recon-table" style="margin-bottom:16px;"><thead><tr><th>基金</th><th style="text-align:center;">不一致</th><th style="text-align:center;">僅一節</th><th style="text-align:center;">相符</th></tr></thead><tbody>${rows}</tbody></table>`;
             })();
             cont.innerHTML = fundSummary +
-                section('🔴 金額不一致', '兩節皆有此(計畫＋二級科目)、但金額不同——最需優先人工核對(可能是分類差異或漏抓)。', diff, true) +
+                diffH +
                 onlyH +
                 `<details style="margin-top:16px;"><summary style="cursor:pointer;color:#28a745;">✅ 金額相符（${ok.length}）</summary>
-                 <table class="recon-table">${head}<tbody>${ok.map(r => rowH(r, false)).join('')}</tbody></table></details>`;
+                 <table class="recon-table">${head}<tbody>${ok.map(r => rowH(r)).join('')}</tbody></table></details>`;
         }
 
         function _populateFundFilter(diff, onlyOne, ok) {
