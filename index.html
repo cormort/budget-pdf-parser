@@ -2,102 +2,143 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <title>農業特別收入基金預算書pdf解析工具</title>
     <style>
-        body { font-family: "Microsoft JhengHei", "微軟正黑體", Arial, sans-serif; margin: 20px; line-height: 1.6; background-color: #f8f9fa; color: #343a40; }
-        .container { max-width: 98vw; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-        h1, h2 { color: #0056b3; border-bottom: 2px solid #0056b3; padding-bottom: 10px; }
-        p, .step-description { color: #6c757d; }
-        td.acct-filled { background: #fff3cd; }  /* 科目為沿用補上、非本行比對，提示人工確認 */
-        tr.lv1-row > td { font-weight: 600; background: #f4f6f8; }  /* 一級科目母列：整列加粗，與其下的二/三級明細列區隔 */
-        tr.lv1-row > td.acct-filled { background: #fff3cd; }        /* 推論提示的黃底優先 */
-        tr.orphan-row > td { background: #fffdf3; }                 /* 孤兒句：有金額但歸不到二/三級科目，待人工歸戶 */
-        tr.orphan-row > td.acct-filled { background: #fff3cd; }
-        .step { border: 1px solid #dee2e6; padding: 20px; border-radius: 5px; margin-top: 25px; }
-        .controls { margin-top: 15px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        /* HeroUI-inspired design tokens（沿用原有 class/id，僅換視覺） */
+        :root {
+            --bg: #f4f4f5; --content: #ffffff;
+            --fg: #11181c; --fg-500: #71717a; --fg-400: #a1a1aa;
+            --divider: rgba(17,24,28,.10);
+            --default-100: #f4f4f5; --default-200: #e4e4e7; --default-300: #d4d4d8;
+            --primary: #006fee; --primary-600: #005bc4; --primary-50: #e6f1fe;
+            --success: #17c964; --success-50: #e8faf0; --success-600: #12a150;
+            --warning: #f5a524; --warning-50: #fefce8; --warning-700: #936316;
+            --danger: #f31260; --danger-50: #fee7ef; --danger-600: #c20e4d;
+            --r-sm: 8px; --r-md: 12px; --r-lg: 14px;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,.06), 0 2px 4px rgba(0,0,0,.04);
+        }
+        * { box-sizing: border-box; }
+        body { font-family: Inter, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; margin: 0; padding: 24px 16px; line-height: 1.6; background: var(--bg); color: var(--fg); -webkit-font-smoothing: antialiased; }
+        .container { max-width: 1600px; margin: auto; background: var(--content); padding: 28px; border-radius: var(--r-lg); box-shadow: var(--shadow-md); }
+        h1 { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 20px; }
+        h2 { font-size: 18px; font-weight: 600; letter-spacing: -.01em; color: var(--fg); margin: 0 0 8px; }
+        h3 { font-size: 15px; font-weight: 600; }
+        p, .step-description { color: var(--fg-500); font-size: 14px; }
+        a { color: var(--primary); }
+
+        /* ── Buttons ── */
+        button { padding: 0 16px; height: 40px; color: #fff; border: none; border-radius: var(--r-md); cursor: pointer; font-size: 14px; font-weight: 500; font-family: inherit; transition: opacity .2s, transform .1s, background-color .2s; }
+        button:hover { opacity: .85; }
+        button:active { transform: scale(.97); }
+        .btn-main { background: var(--primary); box-shadow: 0 2px 6px rgba(0,111,238,.25); }
+        .btn-success { background: var(--success); box-shadow: 0 2px 6px rgba(23,201,100,.25); }
+        .btn-secondary { background: var(--default-100); color: var(--fg); box-shadow: none; }
+        .btn-secondary:hover { background: var(--default-200); opacity: 1; }
+        button:disabled { background: var(--default-200); color: var(--fg-400); cursor: not-allowed; box-shadow: none; opacity: 1; }
+        .file-label { display: inline-flex; align-items: center; height: 40px; padding: 0 16px; background: var(--primary); color: #fff; border-radius: var(--r-md); cursor: pointer; font-size: 14px; font-weight: 500; box-shadow: 0 2px 6px rgba(0,111,238,.25); transition: opacity .2s; }
+        .file-label:hover { opacity: .85; }
         #fileInput { display: none; }
-        .file-label { display: inline-block; padding: 10px 15px; background-color: #007bff; color: white; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; margin-right: 10px; }
-        .file-label:hover { background-color: #0056b3; }
-        #fileNameDisplay { display: inline-block; font-style: italic; color: #555; }
-        button { padding: 10px 15px; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; transition: background-color 0.3s; }
-        .btn-main { background-color: #007bff; }
-        .btn-main:hover { background-color: #0056b3; }
-        .btn-success { background-color: #28a745; }
-        .btn-success:hover { background-color: #218838; }
-        .btn-secondary { background-color: #6c757d; }
-        .btn-secondary:hover { background-color: #5a6268; }
-        button:disabled { background-color: #ccc; cursor: not-allowed; }
-        #output-area, #pasteArea { width: 100%; box-sizing: border-box; height: 400px; margin-top: 10px; font-family: "Consolas", "Courier New", monospace; font-size: 14px; border: 1px solid #ced4da; border-radius: 5px; padding: 10px; resize: vertical; }
-        #tableContainer { margin-top: 20px; overflow-x: auto; }
-        table { border-collapse: collapse; width: 100%; font-size: 14px; }
-        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; vertical-align: top; }
-        th { background-color: #e9ecef; color: #495057; font-weight: bold; }
-        tbody tr:nth-child(even) { background-color: #f2f6fa; }
-        tbody tr:hover { background-color: #e8f0fe; }
-        tr.d-summary { background-color: #fff3cd !important; font-weight: bold; }
-        .diff-pos { color: #1a7f37; font-weight: 600; }
-        .diff-neg { color: #cf222e; font-weight: 600; }
-        .diff-zero { color: #8b949e; }
-        .diff-pos::before { content: '▲ '; font-size: 0.75em; }
-        .diff-neg::before { content: '▼ '; font-size: 0.75em; }
-        /* ── Detail table (#dTable) ── */
-        .d-table-wrap { max-height: 72vh; overflow: auto; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 10px; }
-        #dTable { border-collapse: separate; border-spacing: 0; width: 100%; }
-        #dTable thead th { position: sticky; top: 0; z-index: 2; background: linear-gradient(180deg, #1e3a5f, #17304d); color: #fff; padding: 10px 12px; border: 1px solid #2d5a8a; font-size: 13px; text-shadow: 0 1px 1px rgba(0,0,0,.2); }
-        #dTable tbody td { padding: 7px 10px; border-bottom: 1px solid #e8ecf0; border-right: 1px solid #e8ecf0; }
-        #dTable tbody td:first-child { border-left: 1px solid #e8ecf0; }
-        #dTable tbody tr { background: #fff; }
-        #dTable tbody tr:nth-child(even):not(.d-plan) { background: #f7f9fb; }
-        #dTable tbody tr:hover { background: #dbeafe !important; }
-        #dTable .d-plan { background: #eef3f9 !important; }
-        #dTable .d-plan td { font-weight: 600; border-top: 2px solid #b8cce0; }
-        #dTable .d-plan .d-name { color: #1a365d; padding-left: 4px; }
-        #dTable .d-l1 .d-name { padding-left: 12px; font-weight: 600; }
-        #dTable .d-l2 .d-name { padding-left: 28px; }
-        #dTable .d-l3 .d-name { padding-left: 44px; color: #64748b; font-size: 13px; }
-        #dTable .d-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; letter-spacing: -.3px; }
-        .message { border-left: 4px solid; padding: 10px 15px; margin: 15px 0; border-radius: 4px; display: none; }
-        .status-message { color: #004085; background-color: #cce5ff; border-color: #b8daff; }
-        .error-message { color: #721c24; background-color: #f8d7da; border-color: #f5c6cb; }
-        .replace-tool { display: flex; align-items: center; gap: 5px; }
-        .replace-tool input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        .replace-tool label { display: flex; align-items: center; gap: 5px; font-size: 14px; }
-        .filter-container { margin-bottom: 15px; display: flex; align-items: center; gap: 10px; }
-        .filter-container input { padding: 8px 10px; border: 1px solid #ccc; border-radius: 4px; width: 300px; font-size: 14px; }
-        .filter-container label { font-weight: bold; color: #495057; }
-        .filter-container button { padding: 8px 15px; }
-        #filterCount { color: #0056b3; font-style: italic; }
-        .disclaimer { border: 1px solid #ffc107; border-left: 6px solid #ffc107; background: #fff8e1; border-radius: 6px; padding: 14px 18px; margin: 0 0 18px; }
-        .disclaimer strong { color: #7a5c00; }
-        .disclaimer ul { margin: 8px 0 0; padding-left: 1.3em; }
-        .disclaimer li { margin: 4px 0; color: #5c4a00; }
-        .tab-bar { display: flex; gap: 4px; border-bottom: 2px solid #0056b3; margin-bottom: 20px; }
-        .tab-btn { padding: 12px 22px; background: #e9ecef; color: #495057; border: none; border-radius: 8px 8px 0 0; font-size: 15px; font-weight: bold; cursor: pointer; }
-        .tab-btn.active { background: #0056b3; color: #fff; }
+        #fileNameDisplay { display: inline-block; color: var(--fg-500); font-size: 14px; }
+
+        /* ── Inputs ── */
+        input[type="text"], input[type="number"], select, textarea { font-family: inherit; font-size: 14px; color: var(--fg); background: var(--default-100); border: 2px solid transparent; border-radius: var(--r-md); padding: 9px 12px; transition: background-color .2s, border-color .2s; }
+        input[type="text"]:hover, input[type="number"]:hover, select:hover, textarea:hover { background: var(--default-200); }
+        input[type="text"]:focus, input[type="number"]:focus, select:focus, textarea:focus { outline: none; background: var(--content); border-color: var(--primary); }
+        input::placeholder, textarea::placeholder { color: var(--fg-400); }
+        select { cursor: pointer; height: 40px; }
+        .num-input { width: 76px; }
+
+        /* ── Layout ── */
+        .step { border: 1px solid var(--divider); background: var(--content); padding: 20px; border-radius: var(--r-lg); margin-top: 20px; box-shadow: var(--shadow-sm); }
+        .controls { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+        #output-area, #pasteArea { width: 100%; height: 400px; margin-top: 10px; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; line-height: 1.7; resize: vertical; }
+
+        /* ── Tabs ── */
+        .tab-bar { display: flex; gap: 4px; flex-wrap: wrap; background: var(--default-100); padding: 4px; border-radius: var(--r-lg); margin-bottom: 20px; }
+        .tab-btn { padding: 0 16px; height: 38px; background: transparent; color: var(--fg-500); border: none; border-radius: var(--r-md); font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: none; }
+        .tab-btn:hover { color: var(--fg); opacity: 1; }
+        .tab-btn.active { background: var(--content); color: var(--fg); box-shadow: var(--shadow-sm); }
         .tab-pane { display: none; }
         .tab-pane.active { display: block; }
+
+        /* ── Tables ── */
+        #tableContainer { margin-top: 20px; overflow-x: auto; border-radius: var(--r-lg); }
+        table { border-collapse: collapse; width: 100%; font-size: 14px; }
+        th, td { border-bottom: 1px solid var(--divider); padding: 10px 12px; text-align: left; vertical-align: top; }
+        th { background: var(--default-100); color: var(--fg-500); font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--divider); }
+        th:first-child { border-radius: var(--r-md) 0 0 var(--r-md); }
+        th:last-child { border-radius: 0 var(--r-md) var(--r-md) 0; }
+        tbody tr:hover { background: var(--primary-50); }
+        tr.d-summary { background: var(--warning-50) !important; font-weight: 600; }
+        td.acct-filled { background: var(--warning-50); }  /* 科目為沿用補上、非本行比對，提示人工確認 */
+        tr.lv1-row > td { font-weight: 600; background: var(--default-100); }  /* 一級科目母列 */
+        tr.lv1-row > td.acct-filled { background: var(--warning-50); }
+        tr.orphan-row > td { background: #fffdf3; }        /* 孤兒句：有金額但歸不到二/三級科目 */
+        tr.orphan-row > td.acct-filled { background: var(--warning-50); }
+        .diff-pos { color: var(--success-600); font-weight: 600; }
+        .diff-neg { color: var(--danger-600); font-weight: 600; }
+        .diff-zero { color: var(--fg-400); }
+        .diff-pos::before { content: '▲ '; font-size: 0.75em; }
+        .diff-neg::before { content: '▼ '; font-size: 0.75em; }
+
+        /* ── Detail table (#dTable) ── */
+        .d-table-wrap { max-height: 72vh; overflow: auto; border: 1px solid var(--divider); border-radius: var(--r-lg); margin-top: 10px; }
+        #dTable { border-collapse: separate; border-spacing: 0; width: 100%; }
+        #dTable thead th { position: sticky; top: 0; z-index: 2; background: var(--content); color: var(--fg-500); padding: 12px; border: none; border-bottom: 1px solid var(--divider); font-size: 13px; font-weight: 600; border-radius: 0; }
+        #dTable tbody td { padding: 8px 12px; border: none; border-bottom: 1px solid var(--divider); }
+        #dTable tbody tr { background: var(--content); }
+        #dTable tbody tr:hover { background: var(--primary-50) !important; }
+        #dTable .d-plan { background: var(--default-100) !important; }
+        #dTable .d-plan td { font-weight: 600; border-top: 1px solid var(--default-300); }
+        #dTable .d-plan .d-name { color: var(--fg); padding-left: 4px; }
+        #dTable .d-l1 .d-name { padding-left: 14px; font-weight: 600; }
+        #dTable .d-l2 .d-name { padding-left: 30px; }
+        #dTable .d-l3 .d-name { padding-left: 46px; color: var(--fg-500); font-size: 13px; }
+        #dTable .d-amt { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 13px; }
+
+        /* ── Messages / chips ── */
+        .message { padding: 12px 16px; margin: 16px 0; border-radius: var(--r-md); font-size: 14px; display: none; border: 1px solid transparent; }
+        .status-message { color: var(--primary-600); background: var(--primary-50); border-color: rgba(0,111,238,.15); }
+        .error-message { color: var(--danger-600); background: var(--danger-50); border-color: rgba(243,18,96,.15); }
+        .disclaimer { background: var(--warning-50); border: 1px solid rgba(245,165,36,.3); border-radius: var(--r-lg); padding: 16px 20px; margin: 0 0 20px; font-size: 14px; }
+        .disclaimer strong { color: var(--warning-700); }
+        .disclaimer ul { margin: 8px 0 0; padding-left: 1.3em; }
+        .disclaimer li { margin: 6px 0; color: var(--fg-500); }
+
+        .replace-tool { display: flex; align-items: center; gap: 8px; }
+        .replace-tool label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+        .filter-container { margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
+        .filter-container input { width: 300px; }
+        .filter-container label { font-weight: 600; font-size: 14px; }
+        #filterCount { color: var(--primary); font-size: 13px; }
+
         /* ── 對帳（Tab 3）雙欄對齊呈現 ── */
-        .recon-item { margin: 6px 0; border: 1px solid #dee2e6; border-radius: 6px; background: #fff; }
-        .recon-item summary { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: baseline; padding: 8px 12px; cursor: pointer; list-style: none; }
+        .recon-item { margin: 8px 0; border: 1px solid var(--divider); border-radius: var(--r-lg); background: var(--content); box-shadow: var(--shadow-sm); }
+        .recon-item summary { display: flex; flex-wrap: wrap; gap: 2px 14px; align-items: baseline; padding: 10px 14px; cursor: pointer; list-style: none; border-radius: var(--r-lg); }
         .recon-item summary::-webkit-details-marker { display: none; }
-        .recon-item summary::before { content: '▸ '; color: #0056b3; }
+        .recon-item summary::before { content: '▸ '; color: var(--primary); }
         .recon-item[open] summary::before { content: '▾ '; }
-        .recon-item[open] summary { border-bottom: 1px solid #e9ecef; }
+        .recon-item[open] summary { border-bottom: 1px solid var(--divider); border-radius: var(--r-lg) var(--r-lg) 0 0; }
         .recon-fund { font-weight: 600; white-space: nowrap; }
-        .recon-plan { color: #495057; min-width: 120px; }
-        .recon-acct { color: #6c757d; }
+        .recon-plan { color: var(--fg); min-width: 120px; }
+        .recon-acct { color: var(--fg-500); }
         .recon-amt { font-variant-numeric: tabular-nums; }
         .recon-delta { font-weight: 700; white-space: nowrap; }
-        .recon-body { padding: 10px 12px; overflow-x: auto; }
-        .recon-pair-head { font-size: 12px; color: #6c757d; margin-bottom: 6px; }
+        .recon-body { padding: 12px 14px; overflow-x: auto; }
+        .recon-pair-head { font-size: 12px; color: var(--fg-500); margin-bottom: 6px; }
         .recon-pair { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .recon-pair th, .recon-pair td { border: 1px solid #e8ecf0; padding: 5px 8px; text-align: left; vertical-align: top; }
-        .recon-pair th { background: #f4f6f8; color: #495057; font-weight: 600; }
+        .recon-pair th, .recon-pair td { border-bottom: 1px solid var(--divider); padding: 6px 10px; text-align: left; vertical-align: top; }
+        .recon-pair th { background: var(--default-100); color: var(--fg-500); font-weight: 600; border-radius: 0; }
         .recon-pair .recon-amt { text-align: right; white-space: nowrap; }
-        .recon-pair tr.recon-sum td { font-weight: 700; background: #f4f6f8; border-top: 2px solid #dee2e6; }
-        .recon-desc { color: #8b949e; font-size: 12px; margin-top: 2px; max-width: 420px; }
-        .recon-desc::before { content: '說明：'; color: #adb5bd; }
-        .recon-missing { color: #adb5bd; text-align: center; }
+        .recon-pair tr.recon-sum td { font-weight: 700; background: var(--default-100); }
+        .recon-desc { color: var(--fg-400); font-size: 12px; margin-top: 2px; max-width: 420px; }
+        .recon-desc::before { content: '說明：'; color: var(--fg-400); }
+        .recon-missing { color: var(--fg-400); text-align: center; }
     </style>
 <!-- Google tag (gtag.js) -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-GHGBM401HN"></script>
@@ -116,7 +157,7 @@
         <div class="disclaimer">
             <strong>⚠ 本工具僅供輔助核對，不能取代人工審閱——一切數據以政府公佈的預算書 PDF 原文為準。</strong>
             <ul>
-                <li><strong>金額</strong>取自原文，但<strong>科目分類含大量程式推論</strong>：編列說明的原文常未寫出會計科目名，工具以「由精到鬆」的規則鏈推斷，<span style="background:#fff3cd;">黃底＝推論值</span>，務必回對原始 PDF 確認，切勿直接引用。</li>
+                <li><strong>金額</strong>取自原文，但<strong>科目分類含大量程式推論</strong>：編列說明的原文常未寫出會計科目名，工具以「由精到鬆」的規則鏈推斷，<span style="background:var(--warning-50);padding:1px 6px;border-radius:6px;">黃底＝推論值</span>，務必回對原始 PDF 確認，切勿直接引用。</li>
                 <li><strong>對帳（Tab 3）是提醒工具而非稽核</strong>：兩節粒度本就不同（明細表逐項列出、說明僅描述有文字者），「僅明細有」多屬正常；差異也可能是<strong>任一側解析錯誤</strong>，排查時請先翻原始 PDF 確認兩邊原文數字。</li>
                 <li><strong>已知能力邊界</strong>：部分敘述原文完全沒有科目名（如「提升飼料安全品質…40,000千元」），這類一律留白並標黃待人工複核，屬資料本身限制而非解析錯誤。詳見 <a href="TODO.md">TODO.md</a>。</li>
             </ul>
@@ -136,13 +177,13 @@
                 <label for="fileInput" class="file-label">選擇 PDF 檔案</label>
                 <input type="file" id="fileInput" accept=".pdf">
                 <span id="fileNameDisplay">尚未選擇檔案</span>
-                <label>頁 <input type="number" id="pageFrom" min="1" style="width:70px; padding:8px; border:1px solid #ccc; border-radius:4px;" placeholder="起"> 到
-                <input type="number" id="pageTo" min="1" style="width:70px; padding:8px; border:1px solid #ccc; border-radius:4px;" placeholder="迄"></label>
-                <span style="color:#6c757d; font-size:13px;">（留空＝自動抓「基金用途明細表說明」章節）</span>
+                <label>頁 <input type="number" id="pageFrom" min="1" class="num-input" placeholder="起"> 到
+                <input type="number" id="pageTo" min="1" class="num-input" placeholder="迄"></label>
+                <span style="color:var(--fg-500); font-size:13px;">（留空＝自動抓「基金用途明細表說明」章節）</span>
                 <button id="extractBtn" class="btn-main" onclick="extractPdfText()">提取文字</button>
             </div>
             <div class="controls" style="margin-top:10px;">
-                <span style="color:#6c757d; font-size:13px;">沒有檔案？載入範例：</span>
+                <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
                 <button class="btn-secondary" onclick="loadSample('fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">115年度農業特別收入基金預算案</button>
             </div>
         </div>
@@ -195,7 +236,7 @@
                     <button id="extractBtnD" class="btn-main" onclick="parseDetailPdf()">解析</button>
                 </div>
                 <div class="controls" style="margin-top:10px;">
-                    <span style="color:#6c757d; font-size:13px;">沒有檔案？載入範例：</span>
+                    <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
                     <button class="btn-secondary" onclick="loadSample('fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">115年度農業特別收入基金預算案</button>
                 </div>
             </div>
@@ -213,12 +254,12 @@
                     <input type="file" id="fileInputR" accept=".pdf">
                     <span id="fileNameDisplayR">尚未選擇檔案</span>
                     <button id="extractBtnR" class="btn-main" onclick="runReconcile()">解析並對帳</button>
-                    <select id="fundFilterR" style="display:none;margin-left:8px;padding:4px 8px;" onchange="_filterReconcile()">
+                    <select id="fundFilterR" style="display:none" onchange="_filterReconcile()">
                         <option value="">全部基金</option>
                     </select>
                 </div>
                 <div class="controls" style="margin-top:10px;">
-                    <span style="color:#6c757d; font-size:13px;">沒有檔案？載入範例：</span>
+                    <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
                     <button class="btn-secondary" onclick="loadSample('fileInputR', 'fileNameDisplayR', 'errorOutputR', runReconcile)">115年度農業特別收入基金預算案</button>
                 </div>
             </div>
@@ -245,7 +286,7 @@
                 <p class="step-description">此表的解析已獨立為專用工具並嵌入於下（原始碼與說明：<a href="https://github.com/cormort/unit-budget-parser" target="_blank" rel="noopener">cormort/unit-budget-parser</a>）。上傳<strong>單位預算案</strong>PDF（如主計總處／教育部／農業部單位預算案），依 工作計畫→分支計畫→用途別一級／二級 呈現，內建上下合計驗算、編列說明歸戶、篩選與 xlsx／csv／json 匯出。若下方未顯示，請<a href="https://cormort.github.io/unit-budget-parser/" target="_blank" rel="noopener">另開新視窗使用</a>。</p>
             </div>
             <iframe src="https://cormort.github.io/unit-budget-parser/" title="單位預算歲出計畫提要及分支計畫概況表解析工具"
-                style="width:100%;height:82vh;border:1px solid #d0d7de;border-radius:6px;margin-top:12px;background:#fff;"
+                style="width:100%;height:82vh;border:1px solid var(--divider);border-radius:var(--r-lg);margin-top:12px;background:#fff;"
                 loading="lazy"></iframe>
         </div><!-- /tab-unitplan -->
     </div>
@@ -1058,7 +1099,7 @@
 
             const selectHTML = (id, label, values) => `
                 <label>${label}:
-                    <select id="${id}" style="padding:8px; border:1px solid #ccc; border-radius:4px; max-width:220px;">
+                    <select id="${id}" style="max-width:220px">
                         <option value="">全部</option>
                         ${values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
                     </select>
