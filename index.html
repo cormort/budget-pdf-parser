@@ -580,7 +580,8 @@
         // 字母標號（如「B.推動智慧科技…247,800千元。」）＝更深一層的明細項（農村再生基金用法）
         const _letterPrefixRegex = /^\s*[A-Za-z][\.、]\s*/;
         // 句中「科目名＋N千元」配對，用於拆解內嵌於標題句的明細
-        const _inlinePairRegex = /([一-鿿（）()]{2,22}?)([\d,]+)\s*千\s*元/g;
+        // 含「、」：科目名本身可能有頓號（其他捐助、補助與獎助）；多吃進的前導頓號由 _stripLead 剝除
+        const _inlinePairRegex = /([一-鿿（）()、]{2,22}?)([\d,]+)\s*千\s*元/g;
         // 只從字首剝除贅詞/標點；不可用 /^.*?(…|及|、)/，否則會砍到科目名內部的「及」「、」
         // （如 農業與園藝用品「及」環境美化費、捐助「、」補助與獎助）
         const _stripLead = (s) => {
@@ -592,9 +593,15 @@
         const _inlinePairs = (text) => {
             const out = [];
             for (const m of text.matchAll(_inlinePairRegex)) {
-                const acc = _matchAccount(_stripLead(m[1]));
+                const name = _stripLead(m[1]);
+                let acc = _matchAccount(name), loose = false;
+                if (!acc) {   // 原文省略字首（「雜項設備」←「購置雜項設備」）：片段須是科目名結尾且 ≥3 字，標為推論
+                    const c = _normalize(name);
+                    const it = c.length >= 3 && _chart.find(it => it.norm.endsWith(c));
+                    if (it) { acc = { code: it.code, name: it.name }; loose = true; }
+                }
                 if (acc && acc.code.length >= 2) {
-                    out.push({ code: acc.code, amount: parseInt(m[2].replace(/,/g, ''), 10) * 1000, frag: m[0] });
+                    out.push({ code: acc.code, amount: parseInt(m[2].replace(/,/g, ''), 10) * 1000, frag: m[0].replace(/^[，,、]+/, ''), loose });
                 }
             }
             return out;
@@ -930,7 +937,7 @@
                 // 安全閥：僅當「子項加總 === 母列金額」才拆，對不上就維持原狀，避免捏造或重複計算。
                 if (rowL1 && !rowL2 && amount) {
                     const pairs = _inlinePairs(line);
-                    if (pairs.length >= 2 && pairs.reduce((s, p) => s + p.amount, 0) === amount) {
+                    if (pairs.length >= 1 && pairs.reduce((s, p) => s + p.amount, 0) === amount) {
                         baseRow.isSubtotal = true;                  // 母列＝小計，彙總時不重複計入
                         for (const p of pairs) {
                             rows.push({
@@ -942,8 +949,8 @@
                                 description: p.frag,
                                 raw: p.frag,
                                 code: p.code,
-                                confirmed: true,       // 科目名與金額都是原文明寫
-                                accountFilled: false,
+                                confirmed: !p.loose,       // 科目名與金額都是原文明寫；loose＝科目名由結尾推論
+                                accountFilled: !!p.loose,  // 推論 → 黃底提示
                                 isSubtotal: false,
                                 derived: true          // 由母列拆出
                             });
