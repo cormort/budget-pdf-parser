@@ -115,6 +115,8 @@
         .filter-container { margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
         .filter-container input { width: 300px; }
         .filter-container label { font-weight: 600; font-size: 14px; }
+        #resultTable { table-layout: fixed; min-width: 1100px; }
+        .filter-container select { width: 220px; }  /* 等寬：各篩選列下拉對齊 */
         #filterCount { color: var(--primary); font-size: 13px; }
 
         /* ── 對帳（Tab 3）雙欄對齊呈現 ── */
@@ -1123,6 +1125,8 @@
                     ${selectHTML('filterPlanTop', '計畫', uniq('planTop'))}
                     ${selectHTML('filterPlanSub', '子計畫', uniq('planSub'))}
                     ${hasBudget ? selectHTML('filterBudget', '預算別', uniq('budget')) : ''}
+                </div>
+                <div class="filter-container" style="flex-wrap:wrap;">
                     ${selectHTML('filterL1', '一級科目', uniq('l1Item'))}
                     ${selectHTML('filterL2', '二級科目', uniq('l2Item'))}
                     ${selectHTML('filterL3', '三級科目', uniq('l3Item'))}
@@ -1147,7 +1151,7 @@
              </tr>`).join('');
 
             container.innerHTML = statsHTML + unmatchedHTML + filterHTML +
-                `<table id="resultTable"><thead><tr>${hasFund ? '<th style="white-space:nowrap;">基金</th>' : ''}<th style="min-width:220px;">計畫名稱</th>${hasBudget ? '<th style="white-space:nowrap;">預算別</th>' : ''}<th style="min-width:5.5em;">一級科目</th><th style="min-width:7em;">二級科目</th><th style="min-width:7em;">三級科目</th><th style="white-space:nowrap;">金額</th><th style="min-width:320px;">編列說明</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
+                `<div style="overflow-x:auto;"><table id="resultTable"><colgroup>${hasFund ? '<col style="width:8em">' : ''}<col style="width:13em">${hasBudget ? '<col style="width:6.5em">' : ''}<col style="width:12em"><col style="width:9em"><col style="width:9em"><col style="width:7.5em"><col style="width:24em"></colgroup><thead><tr>${hasFund ? '<th>基金</th>' : ''}<th>計畫名稱</th>${hasBudget ? '<th>預算別</th>' : ''}<th>一級科目</th><th>二級科目</th><th>三級科目</th><th style="white-space:nowrap;">金額</th><th>編列說明</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
 
             // Cache filter DOM references
             ui.filterInput = document.getElementById('filterInput');
