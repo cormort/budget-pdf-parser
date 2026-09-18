@@ -40,7 +40,7 @@
 
 ## 二、解決方案
 
-單一 HTML 檔（`index.html`）的純前端工具，用 pdf.js 讀 PDF、SheetJS 匯出 xlsx，**不上傳任何檔案**。五個分頁。Tab 1～3 皆可一鍵載入內建範例（`examples/moa-fund-115.pdf`＝115 年度農業特別收入基金預算案），不必自備檔案。
+單一 HTML 檔（`index.html`）的純前端工具，用 pdf.js 讀 PDF、SheetJS 匯出 xlsx，**不上傳任何檔案**。五個分頁。Tab 1～3 皆可一鍵載入內建範例（`examples/moa-fund-115.pdf`、`examples/moa-fund-116.pdf`＝115、116 年度農業特別收入基金預算案），不必自備檔案。
 
 ### Tab 1｜用途明細表說明（編列說明）
 上傳 PDF → 自動抓出「基金用途明細表說明」章節 → 清理文字 → 解析成表格 → 可依基金／計畫／科目篩選、匯出 xlsx。
@@ -258,7 +258,7 @@ npm install && npm test
 
 ```
 index.html        主程式（單檔前端；Tab1-4 在此，Tab5 嵌入獨立工具）
-examples/         內建範例 PDF（moa-fund-115.pdf；Tab 1～3 一鍵載入）
+examples/         內建範例 PDF（moa-fund-115.pdf、moa-fund-116.pdf；Tab 1～3 一鍵載入）
 test.mjs          回歸測試（npm test；含頁首剝除的反向驗證）
 compare.mjs       對帳 before/after 驗證（vm 內跑真實 runReconcile：node compare.mjs <舊html> <新html> <pdf>）
 verify.mjs        逐（基金｜二級）金額總和不變性驗證（解析規則改動後的防退化檢查）

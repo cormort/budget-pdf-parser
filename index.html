@@ -184,7 +184,8 @@
             </div>
             <div class="controls" style="margin-top:10px;">
                 <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
-                <button class="btn-secondary" onclick="loadSample('fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">115年度農業特別收入基金預算案</button>
+                <button class="btn-secondary" onclick="loadSample(115, 'fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">115年度農業特別收入基金預算案</button>
+                <button class="btn-secondary" onclick="loadSample(116, 'fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">116年度農業特別收入基金預算案</button>
             </div>
         </div>
         
@@ -237,7 +238,8 @@
                 </div>
                 <div class="controls" style="margin-top:10px;">
                     <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
-                    <button class="btn-secondary" onclick="loadSample('fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">115年度農業特別收入基金預算案</button>
+                    <button class="btn-secondary" onclick="loadSample(115, 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">115年度農業特別收入基金預算案</button>
+                    <button class="btn-secondary" onclick="loadSample(116, 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">116年度農業特別收入基金預算案</button>
                 </div>
             </div>
             <div id="statusMessageD" class="message status-message"></div>
@@ -260,7 +262,8 @@
                 </div>
                 <div class="controls" style="margin-top:10px;">
                     <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
-                    <button class="btn-secondary" onclick="loadSample('fileInputR', 'fileNameDisplayR', 'errorOutputR', runReconcile)">115年度農業特別收入基金預算案</button>
+                    <button class="btn-secondary" onclick="loadSample(115, 'fileInputR', 'fileNameDisplayR', 'errorOutputR', runReconcile)">115年度農業特別收入基金預算案</button>
+                    <button class="btn-secondary" onclick="loadSample(116, 'fileInputR', 'fileNameDisplayR', 'errorOutputR', runReconcile)">116年度農業特別收入基金預算案</button>
                 </div>
             </div>
             <div id="statusMessageR" class="message status-message"></div>
@@ -1242,11 +1245,15 @@
         }
 
         // 內附範例 PDF：塞進該分頁的 file input 後，直接跑該分頁既有的解析流程
-        const SAMPLE_PDF = { file: 'examples/moa-fund-115.pdf', label: '115年度農業特別收入基金預算案' };
-        async function loadSample(inputId, displayId, errorId, run) {
+        const SAMPLE_PDFS = {
+            115: { file: 'examples/moa-fund-115.pdf', label: '115年度農業特別收入基金預算案' },
+            116: { file: 'examples/moa-fund-116.pdf', label: '116年度農業特別收入基金預算案' },
+        };
+        async function loadSample(year, inputId, displayId, errorId, run) {
             const err = document.getElementById(errorId);
             err.style.display = 'none';
             try {
+                const SAMPLE_PDF = SAMPLE_PDFS[year];
                 const res = await fetch(SAMPLE_PDF.file);
                 if (!res.ok) throw new Error(`下載失敗（HTTP ${res.status}）`);
                 const dt = new DataTransfer();
