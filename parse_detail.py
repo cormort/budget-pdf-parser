@@ -28,7 +28,7 @@ from parse_budget import (
 DETAIL_MARKER = "基金用途明細表"
 NUM_RE = re.compile(r"^[\d,]+$")
 PLAN_L1 = re.compile(r"^[壹貳參肆伍陸柒捌玖拾]、")
-PLAN_L2 = re.compile(r"^[一二三四五六七八九十]、")
+PLAN_L2 = re.compile(r"^[一二三四五六七八九十]+、")  # +：支援「十六、」
 PLAN_L3 = re.compile(r"^[（(][一二三四五六七八九十]+[）)]")
 
 
@@ -124,9 +124,19 @@ def parse_detail_pdf(pdf_path: Path):
 def _assign(cells, cols, right_cut):
     """把一行切成 (name, {欄名:int})。名稱=右界左側的 CJK；金額=最近欄(≤45px)。"""
     name_parts, amounts = [], {}
+    # PDF 字距會把一個金額拆成兩個 word（如「8」「9,180」），相距 ≤10px 的數字片段併回
+    merged = []
     for x0, text in cells:
         t = text.strip()
-        if not t:
+        if merged and NUM_RE.match(t) and NUM_RE.match(merged[-1][1]) and x0 - merged[-1][2] <= 10:
+            merged[-1][1] += t
+        else:
+            merged.append([x0, t, x0])
+        merged[-1][2] = x0
+    cells = [(m[0], m[1]) for m in merged]
+    for x0, text in cells:
+        t = text.strip()
+        if not t or t in ("-", "－", "--"):  # 空金額佔位（新增計畫前年度欄）不進名稱
             continue
         if NUM_RE.match(t.replace("-", "")) and any(c.isdigit() for c in t):
             best = min(cols.items(), key=lambda kv: abs(kv[1] - x0))
