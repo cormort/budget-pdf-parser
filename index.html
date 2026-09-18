@@ -528,6 +528,13 @@
                 }
             }
         });
+        // 篩選選單排序：科目依代碼表順序，非科目（計畫、基金）排在後面、維持字碼序
+        const _chartRank = new Map();
+        _chart.forEach((it, i) => { if (!_chartRank.has(it.name)) _chartRank.set(it.name, i); });
+        const _byChart = (a, b) => {
+            const ra = _chartRank.get(a) ?? Infinity, rb = _chartRank.get(b) ?? Infinity;
+            return ra !== rb ? ra - rb : (a < b ? -1 : a > b ? 1 : 0);
+        };
         // 依代碼表原始順序（＝科目代碼順序）保留一份，供「下一個科目」關鍵字回退比對用
         const _chartOrdered = _chart.slice();
         const _codeIndex = new Map(_chartOrdered.map((it, i) => [it.code, i]));
@@ -1116,7 +1123,7 @@
                         ${values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}
                     </select>
                 </label>`;
-            const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
+            const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort(_byChart);
             const hasFund = data.some(r => r.fund);
             const hasBudget = data.some(r => r.budget);
             const filterHTML = `
@@ -1183,7 +1190,7 @@
                         const [upSel, upKey] = selects[up];
                         if (upSel.value) subset = subset.filter(r => r[upKey] === upSel.value);
                     }
-                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort();
+                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort(_byChart);
                     sel.innerHTML = `<option value="">全部</option>` +
                         values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
                     sel.value = values.includes(prevValue) ? prevValue : '';
@@ -2119,7 +2126,7 @@
             const fmtDiff = v => (v === null || v === undefined) ? '' : (v > 0 ? '+' : '') + v.toLocaleString();
             const diffClass = v => (v === null || v === undefined) ? '' : (v > 0 ? 'diff-pos' : (v < 0 ? 'diff-neg' : 'diff-zero'));
             const fmtDiffHtml = v => (v === null || v === undefined) ? '' : `<span class="${diffClass(v)}">${fmtDiff(v)}</span>`;
-            const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort();
+            const uniq = key => [...new Set(data.map(r => r[key]).filter(Boolean))].sort(_byChart);
             const hasFund = data.some(r => r.fund);
             const selHTML = (id, label, vals) => `<label>${label}: <select id="${id}" style="padding:8px;border:1px solid #ccc;border-radius:4px;max-width:220px;"><option value="">全部</option>${vals.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('')}</select></label>`;
 
@@ -2201,7 +2208,7 @@
                         const [upSel, upKey] = selects[up];
                         if (upSel.value) subset = subset.filter(r => r[upKey] === upSel.value);
                     }
-                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort();
+                    const values = [...new Set(subset.map(r => r[key]).filter(Boolean))].sort(_byChart);
                     sel.innerHTML = `<option value="">全部</option>` +
                         values.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
                     sel.value = values.includes(prevValue) ? prevValue : '';
