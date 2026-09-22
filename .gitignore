@@ -5,4 +5,3 @@ __pycache__/
 *.pdf
 !examples/*.pdf
 node_modules/
-中央銀行/
