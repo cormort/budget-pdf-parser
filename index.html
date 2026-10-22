@@ -1691,18 +1691,19 @@
             // pdf.js 常把相鄰數字合併成一個含空格的 item；依 width 依字元比例拆回子 token
             const s = it.str;
             const x = it.transform[4], w = it.width || 0;
-            if (!/\S\s+\S/.test(s)) return [{ x, str: s }];
+            if (!/\S\s+\S/.test(s)) return [{ x, w, str: s }];
             const out = [];
             const re = /\S+/g; let m;
             while ((m = re.exec(s)) !== null) {
-                out.push({ x: x + (s.length ? (m.index / s.length) * w : 0), str: m[0] });
+                const k = s.length ? w / s.length : 0;
+                out.push({ x: x + m.index * k, w: m[0].length * k, str: m[0] });
             }
             return out;
         }
 
         function _detailLines(items) {
             // 依 y 分行；每行 [{x,str}] 依 x 排序（細表需保留 x，故先展開再分行）
-            return _groupLines(items.flatMap(it => _expandItem(it).map(sub => ({ x: sub.x, y: it.transform[5], str: sub.str }))));
+            return _groupLines(items.flatMap(it => _expandItem(it).map(sub => ({ x: sub.x, w: sub.w, y: it.transform[5], str: sub.str }))));
         }
 
         function _detailColumns(lines) {
@@ -1713,13 +1714,14 @@
                     if (t && !(t in pos)) pos[t] = it.x;
                 }
             }
-            // 表頭 token 可能是完整詞、拆兩行、或逐字；用多形式尋找欄位錨點 x
+            // 表頭 token 可能是完整詞、拆兩行、逐字，或末字斷開（「本年度預算」「數」，116 年度林務基金）；
+            // 用多形式尋找欄位錨點 x
             const px = (...keys) => { for (const k of keys) if (k in pos) return pos[k]; return null; };
             const O = 20;
-            const rightCut = px('計畫內容說明', '說', '備註', '備') ?? 9999;
-            const xF = px('前年度決算數', '前年度', '前');
-            const xB = px('本年度預算數', '本年度', '本');
-            const xU = px('上年度預算數', '上年度', '上');
+            const rightCut = px('計畫內容說明', '計畫內容說', '說', '備註', '備') ?? 9999;
+            const xF = px('前年度決算數', '前年度決算', '前年度', '前');
+            const xB = px('本年度預算數', '本年度預算', '本年度', '本');
+            const xU = px('上年度預算數', '上年度預算', '上年度', '上');
             let cols = null;
             if (xB != null || xU != null) {  // 預算書細表(3欄)：有本/上年度即判定，避免單字「決/預」誤觸發決算
                 cols = {};
@@ -1839,16 +1841,35 @@
             return exact;
         }
 
-        function _detailAssign(line, cols, rightCut) {
+        // 金額靠右對齊：位數少的數字（「25」）左緣離下一欄比較近，用左緣找欄會歸錯欄
+        //（116 年度一般行政管理計畫：一般服務費 25、專業服務費 50 被歸到上年度，服務費用小計因此對不上）。
+        // 先用位數多、不會混淆的數字量出本頁每一欄的右緣（中位數），再一律以右緣歸欄。
+        function _detailRightEdges(lines, cols) {
+            const acc = {};
+            for (const line of lines) for (const it of line) {
+                const t = it.str.trim();
+                if (!it.w || !/^[-－]?[\d,]+$/.test(t) || t.replace(/\D/g, '').length < 4) continue;
+                let best = null, bd = 1e9;
+                for (const [k, cx] of Object.entries(cols)) { const d = Math.abs(cx - it.x); if (d < bd) { bd = d; best = k; } }
+                if (best && bd <= 45) (acc[best] = acc[best] || []).push(it.x + it.w);
+            }
+            const out = {};
+            for (const [k, v] of Object.entries(acc)) { v.sort((a, b) => a - b); out[k] = v[v.length >> 1]; }
+            return Object.keys(out).length === Object.keys(cols).length ? out : null;
+        }
+
+        function _detailAssign(line, cols, rightCut, colsR) {
             const nameParts = []; const amounts = {};
-            const entries = Object.entries(cols);
+            const entries = Object.entries(colsR || cols);
             for (const it of line) {
                 const t = it.str.trim();
                 if (!t || _dashOnly.test(t)) continue;  // 空金額佔位「-」不計
                 if (/^[-－]?[\d,]+(\.\d+)?$/.test(t)) {  // 數字類(含決算表的比較增減金額、%)
                     if (t.includes('.')) continue;  // 小數＝百分比欄，忽略(不進金額也不進名稱)
+                    const at = colsR && it.w ? it.x + it.w : it.x;
+                    const es = colsR && it.w ? entries : Object.entries(cols);
                     let best = null, bd = 1e9;
-                    for (const [k, cx] of entries) { const d = Math.abs(cx - it.x); if (d < bd) { bd = d; best = k; } }
+                    for (const [k, cx] of es) { const d = Math.abs(cx - at); if (d < bd) { bd = d; best = k; } }
                     if (best && bd <= 45 && !(best in amounts)) {  // 太遠(比較增減金額)不歸欄
                         const n = parseInt(t.replace(/,/g, ''), 10);
                         amounts[best] = isNaN(n) ? null : n;
@@ -1986,8 +2007,9 @@
         function _mergeWrapped(lines, cols, rightCut) {
             // 換行接續行(無金額、非計畫標號、非科目、非表頭)併回上一列名稱，修正長名被截斷
             const items = [];
+            const colsR = _detailRightEdges(lines, cols);
             for (const line of lines) {
-                const a = _detailAssign(line, cols, rightCut);
+                const a = _detailAssign(line, cols, rightCut, colsR);
                 if (!a.name) continue;
                 // 續行判定不能問「這行像不像科目」——長名折行後的片段可能剛好以科目名開頭，
                 // 例如「購建固定資產、無形資產、|非理財目的之長期投資及營|舍與設施工程支出」
