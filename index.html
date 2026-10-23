@@ -338,9 +338,9 @@
             ui.extractBtn.disabled = true; ui.convertBtn.disabled = true;
             if (!ui.fileInput.files || ui.fileInput.files.length === 0) { showMessage(ui.errorOutput, '請先選擇一個 PDF 文件！'); ui.extractBtn.disabled = false; return; }
             showMessage(ui.statusMessage, '正在讀取檔案...');
-            const file = ui.fileInput.files[0]; const typedarray = new Uint8Array(await file.arrayBuffer());
+            let pdfDoc;
             try {
-                const pdfDoc = await pdfjsLib.getDocument({ data: typedarray }).promise;
+                pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(await ui.fileInput.files[0].arrayBuffer()) }).promise;
                 const pageFrom = parseInt(document.getElementById('pageFrom').value, 10) || 0;
                 const pageTo = parseInt(document.getElementById('pageTo').value, 10) || 0;
                 const useRange = pageFrom >= 1 && pageTo >= pageFrom;
@@ -372,7 +372,7 @@
             } catch (err) {
                 console.error("提取 PDF 時發生錯誤:", err);
                 showMessage(ui.errorOutput, `提取 PDF 時發生錯誤：${err.message}${err.name === 'PasswordException' ? ' (文件可能已加密)' : ''}`);
-            } finally { ui.extractBtn.disabled = false; }
+            } finally { ui.extractBtn.disabled = false; if (pdfDoc) pdfDoc.destroy(); }
         }
 
         function findAndReplace() {
@@ -418,8 +418,16 @@
             return singleLine.trim();
         }
 
-        function breakLinesByHeadings() {
-            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+        // ----- 清理步驟：純字串函式；按鈕版（_uiClean）與 _autoCleanText 共用 -----
+        // 文字區有內容才跑；msg 可為函式（收到清理前/後文字，用於回報筆數）
+        function _uiClean(fn, msg) {
+            const before = ui.outputArea.value;
+            if (!before) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+            ui.outputArea.value = fn(before);
+            showMessage(ui.statusMessage, typeof msg === 'function' ? msg(before, ui.outputArea.value) : msg);
+        }
+
+        function _reflowText(text) {
             // 基金標記行不參與 reflow：以它為界分段各自重新斷行，標記行原樣保留
             const out = [];
             let buf = [];
@@ -432,57 +440,38 @@
                 }
             }
             if (buf.length) out.push(reflowBlock(buf.join('\n')));
-            ui.outputArea.value = out.filter(s => s !== '').join('\n');
-            showMessage(ui.statusMessage, "已根據標號與句末「。」重新斷行 (v36)。");
+            return out.filter(s => s !== '').join('\n');
         }
 
-        function breaklineBeforeParenthesis() {
-            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
-            const regex = /(\(\d{1,2}\)|\([一二三四五六七八九十]+\))/g;
-            ui.outputArea.value = text.replace(regex, '\n  $1');
-            showMessage(ui.statusMessage, "已在所有 (1-99的數字/中文數字) 前插入換行與縮排。");
-        }
+        const _parenBreakText = text => text.replace(/(\(\d{1,2}\)|\([一二三四五六七八九十]+\))/g, '\n  $1');
 
-        function cleanInternalWhitespace() {
-            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
-            const lines = text.split('\n');
-            const cleanedLines = lines.map(line => {
-                const match = line.match(/^(\s*)/); const leadingWhitespace = match ? match[1] : '';
-                const content = line.substring(leadingWhitespace.length); const cleanedContent = content.replace(/[\s　]+/g, '').trim();
-                return leadingWhitespace + cleanedContent;
-            });
-            ui.outputArea.value = cleanedLines.join('\n');
-            showMessage(ui.statusMessage, "已移除行內空白，並保留行首縮排。");
-        }
+        // 移除行內空白，保留行首縮排
+        const _squeezeText = text => text.split('\n').map(line => {
+            const lead = line.match(/^\s*/)[0];
+            return lead + line.substring(lead.length).replace(/[\s　]+/g, '');
+        }).join('\n');
 
-        function stripPageNumbers() {
-            let text = ui.outputArea.value; if (!text) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
+        function _stripPageNumbersText(text) {
             // 頁首已於抽取階段依行索引剝除（_stripPageHead），此處只處理頁碼行。
             // 原本的「重複出現 >=3 次的短純中文行」動態偵測已移除：它會連同「從句中剝除」
             // 一起把正文用字刪掉（長基金名若出現在敘述裡即中招，且靜默無徵兆）。
             // 位置固定時用位置判定，不要用字串比對——姊妹專案 unit-budget-parser 曾因此誤刪
             // 「農業部門」「美國農業部」等正文。
-            const lines = text.split('\n');
             // 破折號兩側可能有空白（PDF 抽出的頁碼常是「2 - 17 」）；此處若漏掉，
             // 後續清理會把空白去掉而留下獨立的「2-17」行，被解析器併進前一列的編列說明。
             const pageRegex = /^[\s　]*[0-9０-９]+(?:[\s　]*[-－‐–—][\s　]*[0-9０-９]+)?[\s　]*$/;
-            let count = 0;
-            const filtered = lines.filter(line => {
-                if (pageRegex.test(line.trim())) { count++; return false; }
-                return true;
-            });
-            ui.outputArea.value = filtered.join('\n');
-            showMessage(ui.statusMessage, `已移除 ${count} 行頁碼（頁首於抽取階段已依位置剝除）。`);
+            return text.split('\n').filter(line => !pageRegex.test(line.trim())).join('\n');
         }
 
-        function autoClean() {
-            if (!ui.outputArea.value) { showMessage(ui.errorOutput, "文字區沒有內容。"); return; }
-            stripPageNumbers();
-            breakLinesByHeadings();
-            breaklineBeforeParenthesis();
-            cleanInternalWhitespace();
-            showMessage(ui.statusMessage, "已完成一鍵清理 (去除頁碼 → 依標號斷行 → 在括號前換行 → 清理行內空白)。");
-        }
+        // 一鍵清理(純字串)：去除頁碼 → 依標號斷行 → 在括號前換行 → 清理行內空白
+        function _autoCleanText(text) { return _squeezeText(_parenBreakText(_reflowText(_stripPageNumbersText(text)))); }
+
+        const _lineCount = t => t.split('\n').length;
+        function stripPageNumbers() { _uiClean(_stripPageNumbersText, (a, b) => `已移除 ${_lineCount(a) - _lineCount(b)} 行頁碼（頁首於抽取階段已依位置剝除）。`); }
+        function breakLinesByHeadings() { _uiClean(_reflowText, "已根據標號與句末「。」重新斷行 (v36)。"); }
+        function breaklineBeforeParenthesis() { _uiClean(_parenBreakText, "已在所有 (1-99的數字/中文數字) 前插入換行與縮排。"); }
+        function cleanInternalWhitespace() { _uiClean(_squeezeText, "已移除行內空白，並保留行首縮排。"); }
+        function autoClean() { _uiClean(_autoCleanText, "已完成一鍵清理 (去除頁碼 → 依標號斷行 → 在括號前換行 → 清理行內空白)。"); }
 
         // ----- Account chart (built once at module level) -----
         const _DROPS_RE = /[\s、及－\-]/;
@@ -1237,7 +1226,7 @@
                 //   母列（小計）：解析器補出的上層列，金額與其下明細「完全」重複 → 加總必須濾掉
                 //   母標題句　　：原文自帶的小計句(「…編列16,982千元，包括：」)，其下子句若各自
                 //                成列則重複、若全歸不了戶則是唯一有金額的列 → 需逐案判斷
-                // 實測 examples/moa-fund-115.pdf：全部相加 1,902.8 億、濾掉母列（小計）1,510.3 億、
+                // 實測 examples/moa-fund-115.pdf：全部相加 1,939.6 億、濾掉母列（小計）1,510.3 億、
                 // 兩種都濾 790.9 億（過度扣減）——併成一類就沒辦法讓使用者做對的那個減法。
                 const kindOf = r => r.isSubtotal ? '母列（小計）'
                     : _rowKind(r) === 'orphan' ? '孤兒句'
@@ -1360,16 +1349,6 @@
             return _joinFundPages(selected.length ? selected : pageLinesList, true);
         }
 
-        // 一鍵清理(純字串)：暫借文字區跑既有清理函式後還原，避免重寫邏輯
-        function _autoCleanText(text) {
-            const saved = ui.outputArea.value;
-            ui.outputArea.value = text;
-            stripPageNumbers(); breakLinesByHeadings(); breaklineBeforeParenthesis(); cleanInternalWhitespace();
-            const result = ui.outputArea.value;
-            ui.outputArea.value = saved;
-            return result;
-        }
-
         let _reconcileData = { diff: [], onlyOne: [], ok: [] };
 
         const _akey = s => (s || '').replace(/[\s　、（）()－\-]/g, '');   // 科目名對帳用正規化
@@ -1384,11 +1363,12 @@
                 show('statusMessage', '解析中...');
                 const buf = new Uint8Array(await fi.files[0].arrayBuffer());
                 const doc = await pdfjsLib.getDocument({ data: buf }).promise;
-                // 說明版
-                const text = _autoCleanText(await _extractNarrativeText(doc));
+                let text, dres;
+                try {
+                    text = _autoCleanText(await _extractNarrativeText(doc));   // 說明版
+                    dres = await parseDetailDoc(doc);                         // 明細版
+                } finally { doc.destroy(); }
                 const nrows = parseNarrativeText(text).rows;
-                // 明細版
-                const dres = await parseDetailDoc(doc);
                 // 沒有明細側就沒有對照組。少了這道檢查，說明版的每一列都會落進「僅一節出現」，
                 // 畫面顯示「不一致 0、相符 0」——讀起來像對得很乾淨，其實是根本沒對到東西。
                 if (!dres.rows.length) {
@@ -1895,7 +1875,8 @@
                 for (const file of fi.files) {
                     const buf = new Uint8Array(await file.arrayBuffer());
                     const doc = await pdfjsLib.getDocument({ data: buf }).promise;
-                    const res = await parseDetailDoc(doc, (i, n) => show('statusMessage', `${file.name}：第 ${i}/${n} 頁...`));
+                    const res = await parseDetailDoc(doc, (i, n) => show('statusMessage', `${file.name}：第 ${i}/${n} 頁...`))
+                        .finally(() => doc.destroy());
                     if (res.rows.length) { res.fileName = file.name; _detailSources.push(res); }
                 }
                 if (!_detailSources.length) { show('errorOutput', '找不到數字版「基金用途明細表」細表頁（需含科目）。'); return; }

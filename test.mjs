@@ -13,17 +13,23 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.js';
 import { readFile } from 'fs/promises';
 import vm from 'node:vm';
 
-const FIXTURE = '農業基金用途明細114年度預算案 (1).pdf';
-
 // ── 期望值：任何規則改動若動到既有結果，這裡就會失敗 ──
-const EXPECT = {
-    rows: 275,          // 解析出的資料列（含同句鑽到二/三級時補出的一級母列 28、二級母列 4，
-                        // 以及「一句列多科目＋合共」拆出的子列 74——見 TODO.md B 項）
-    unmatched: 0,       // 未匹配到任何科目的行（非資料的殘行）
-    withL2: 225,        // 有二級科目者（含補出的二級母列 4 與拆出的子列 74）
-    inferred: 42,       // 推論補上、以黃底標示者（含 2 筆拆出子列的截斷科目名補全：
-                        // 「交通及運輸設備」→購置交通及運輸設備、「計時與計件人員酬金」→27D）
-    funds: ['農業發展基金'],
+const FIXTURES = {
+    '農業基金用途明細114年度預算案 (1).pdf': {
+        rows: 275,          // 解析出的資料列（含同句鑽到二/三級時補出的一級母列 28、二級母列 4，
+                            // 以及「一句列多科目＋合共」拆出的子列 74——見 TODO.md B 項）
+        unmatched: 0,       // 未匹配到任何科目的行（非資料的殘行）
+        withL2: 225,        // 有二級科目者（含補出的二級母列 4 與拆出的子列 74）
+        inferred: 42,       // 推論補上、以黃底標示者（含 2 筆拆出子列的截斷科目名補全：
+                            // 「交通及運輸設備」→購置交通及運輸設備、「計時與計件人員酬金」→27D）
+        funds: ['農業發展基金'],
+    },
+    // 多基金合輯（6 個基金）：涵蓋基金切分與跨基金規則；netAmount＝濾掉母列（小計）後的總額（元），
+    // 即 README「一般情況用這個」的那個數字，金額層面的回歸由它把關。
+    'examples/moa-fund-115.pdf': {
+        rows: 1188, unmatched: 0, withL2: 940, inferred: 206, netAmount: 151027554000,
+        funds: ['農業發展基金', '林務發展及造林基金', '農業天然災害救助基金', '漁業發展基金', '農產品受進口損害救助基金', '農村再生基金'],
+    },
 };
 
 function loadTool(html) {
@@ -73,38 +79,48 @@ function headerStripSafety(rawText) {
 
 const html = await readFile(new URL('./index.html', import.meta.url), 'utf8');
 const ctx = loadTool(html);
-const data = new Uint8Array(await readFile(new URL(`./${FIXTURE}`, import.meta.url)));
-const task = getDocument({ data });
-const pdf = await task.promise;
+let failed = false;
 
-const raw = await ctx._extractNarrativeText(pdf);
-const cleaned = ctx._autoCleanText(raw);
-const { rows, unmatchedLines } = ctx.parseNarrativeText(cleaned);
-await task.destroy();
+for (const [fixture, EXPECT] of Object.entries(FIXTURES)) {
+    const data = new Uint8Array(await readFile(new URL(`./${fixture}`, import.meta.url)));
+    const task = getDocument({ data });
+    const pdf = await task.promise;
 
-const got = {
-    rows: rows.length,
-    unmatched: unmatchedLines.length,
-    withL2: rows.filter(r => r.l2Item).length,
-    inferred: rows.filter(r => r.accountFilled).length,
-    funds: [...new Set(rows.map(r => r.fund).filter(Boolean))],
-};
+    const raw = await ctx._extractNarrativeText(pdf);
+    const cleaned = ctx._autoCleanText(raw);
+    const { rows, unmatchedLines } = ctx.parseNarrativeText(cleaned);
+    await task.destroy();
 
-const errs = [];
-for (const [k, want] of Object.entries(EXPECT)) {
-    const a = JSON.stringify(got[k]), b = JSON.stringify(want);
-    if (a !== b) errs.push(`${k}: 期望 ${b}，實際 ${a}`);
+    const got = {
+        rows: rows.length,
+        unmatched: unmatchedLines.length,
+        withL2: rows.filter(r => r.l2Item).length,
+        inferred: rows.filter(r => r.accountFilled).length,
+        netAmount: rows.filter(r => !r.isSubtotal).reduce((s, r) => s + (r.amount || 0), 0),
+        funds: [...new Set(rows.map(r => r.fund).filter(Boolean))],
+    };
+
+    const errs = [];
+    for (const [k, want] of Object.entries(EXPECT)) {
+        const a = JSON.stringify(got[k]), b = JSON.stringify(want);
+        if (a !== b) errs.push(`${k}: 期望 ${b}，實際 ${a}`);
+    }
+    const safety = headerStripSafety(raw);
+    errs.push(...safety.bad.map(m => '頁首剝除誤傷正文 → ' + m));
+
+    if (errs.length) {
+        failed = true;
+        console.error(`✗ ${fixture}`);
+        errs.forEach(e => console.error('    ' + e));
+        continue;
+    }
+    console.log(`✓ ${fixture}`);
+    console.log(`    ${got.funds.length} 個基金｜${got.rows} 列｜有二級科目 ${got.withL2}（其中推論 ${got.inferred}）｜未匹配 ${got.unmatched} 行｜淨額 ${(got.netAmount / 1e8).toFixed(1)} 億`);
+    console.log(`    反向驗證：句中剝除字串 ${safety.stripped.length} 種（${safety.stripped.join('、') || '無'}），皆未誤傷正文`);
 }
-const safety = headerStripSafety(raw);
-errs.push(...safety.bad.map(m => '頁首剝除誤傷正文 → ' + m));
 
-if (errs.length) {
-    console.error(`✗ ${FIXTURE}`);
-    errs.forEach(e => console.error('    ' + e));
-    console.error('\n若為刻意調整規則，請一併更新 test.mjs 的 EXPECT 與 README 數字。');
+if (failed) {
+    console.error('\n若為刻意調整規則，請一併更新 test.mjs 的 FIXTURES 與 README 數字。');
     process.exit(1);
 }
-console.log(`✓ ${FIXTURE}`);
-console.log(`    ${got.funds.join('、')}｜${got.rows} 列｜有二級科目 ${got.withL2}（其中推論 ${got.inferred}）｜未匹配 ${got.unmatched} 行`);
-console.log(`    反向驗證：句中剝除字串 ${safety.stripped.length} 種（${safety.stripped.join('、') || '無'}），皆未誤傷正文`);
 console.log('\n全部通過。');
