@@ -23,11 +23,14 @@ const FIXTURES = {
         inferred: 42,       // 推論補上、以黃底標示者（含 2 筆拆出子列的截斷科目名補全：
                             // 「交通及運輸設備」→購置交通及運輸設備、「計時與計件人員酬金」→27D）
         funds: ['農業發展基金'],
+        detailRows: 0, recon: null,   // 此檔只有編列說明節，沒有數字明細表可對
     },
     // 多基金合輯（6 個基金）：涵蓋基金切分與跨基金規則；netAmount＝濾掉母列（小計）後的總額（元），
     // 即 README「一般情況用這個」的那個數字，金額層面的回歸由它把關。
     'examples/moa-fund-115.pdf': {
         rows: 1188, unmatched: 0, withL2: 940, inferred: 206, netAmount: 151027554000,
+        // Tab 2 用途明細表列數與 Tab 3 對帳結果：明細表欄位偵測一改就會動到，以前沒人守
+        detailRows: 756, recon: [5, 12, 333],   // [不一致, 僅一節, 相符]
         funds: ['農業發展基金', '林務發展及造林基金', '農業天然災害救助基金', '漁業發展基金', '農產品受進口損害救助基金', '農村再生基金'],
     },
 };
@@ -89,7 +92,9 @@ for (const [fixture, EXPECT] of Object.entries(FIXTURES)) {
     const raw = await ctx._extractNarrativeText(pdf);
     const cleaned = ctx._autoCleanText(raw);
     const { rows, unmatchedLines } = ctx.parseNarrativeText(cleaned);
+    const dres = await ctx.parseDetailDoc(pdf);
     await task.destroy();
+    const rec = dres.rows.length ? ctx._reconcileRows(rows, dres) : null;
 
     const got = {
         rows: rows.length,
@@ -98,6 +103,8 @@ for (const [fixture, EXPECT] of Object.entries(FIXTURES)) {
         inferred: rows.filter(r => r.accountFilled).length,
         netAmount: rows.filter(r => !r.isSubtotal).reduce((s, r) => s + (r.amount || 0), 0),
         funds: [...new Set(rows.map(r => r.fund).filter(Boolean))],
+        detailRows: dres.rows.length,
+        recon: rec && [rec.diff.length, rec.onlyOne.length, rec.ok.length],
     };
 
     const errs = [];
@@ -118,6 +125,16 @@ for (const [fixture, EXPECT] of Object.entries(FIXTURES)) {
     console.log(`    ${got.funds.length} 個基金｜${got.rows} 列｜有二級科目 ${got.withL2}（其中推論 ${got.inferred}）｜未匹配 ${got.unmatched} 行｜淨額 ${(got.netAmount / 1e8).toFixed(1)} 億`);
     console.log(`    反向驗證：句中剝除字串 ${safety.stripped.length} 種（${safety.stripped.join('、') || '無'}），皆未誤傷正文`);
 }
+
+// 靜態契約：與姊妹專案 unit-budget-parser／local-budget-parser 一致
+const sri = lib => new RegExp(`${lib.replace(/[.]/g, '\\.')}"\\s+integrity="sha384-[^"]+"\\s+crossorigin="anonymous"`).test(html);
+if (!sri('pdf.js/2.10.377/pdf.min.js') || !sri('xlsx/0.18.5/xlsx.full.min.js')) {
+    failed = true; console.error('✗ CDN 程式庫缺少 SRI + crossorigin');
+} else console.log('✓ CDN 程式庫都有 SRI + crossorigin');
+const msgs = [...html.matchAll(/<div id="(statusMessage|errorOutput)[A-Z]?"[^>]*>/g)].map(m => m[0]);
+if (!msgs.length || msgs.some(m => !/role="(status|alert)"/.test(m)) || msgs.filter(m => /statusMessage/.test(m)).some(m => !/aria-live="polite"/.test(m))) {
+    failed = true; console.error('✗ 狀態／錯誤訊息缺少 role 或 aria-live');
+} else console.log(`✓ 狀態／錯誤訊息（${msgs.length} 個）都有 role，狀態訊息有 aria-live`);
 
 if (failed) {
     console.error('\n若為刻意調整規則，請一併更新 test.mjs 的 FIXTURES 與 README 數字。');

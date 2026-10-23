@@ -192,8 +192,8 @@
             </div>
         </div>
         
-        <div id="statusMessage" class="message status-message"></div>
-        <div id="errorOutput" class="message error-message"></div>
+        <div id="statusMessage" class="message status-message" role="status" aria-live="polite"></div>
+        <div id="errorOutput" class="message error-message" role="alert"></div>
 
         <div class="step" style="display:none;"><!-- 步驟二手動清理：UI 隱藏、程式碼保留(提取後自動執行 autoClean) -->
             <h2>步驟二：文字清理工具箱</h2>
@@ -246,8 +246,8 @@
                     <button class="btn-secondary" onclick="loadSample('114final', 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">114年度農業特別收入基金決算書</button>
                 </div>
             </div>
-            <div id="statusMessageD" class="message status-message"></div>
-            <div id="errorOutputD" class="message error-message"></div>
+            <div id="statusMessageD" class="message status-message" role="status" aria-live="polite"></div>
+            <div id="errorOutputD" class="message error-message" role="alert"></div>
             <div id="tableContainerD"><p>數字比較表將顯示於此處。</p></div>
         </div><!-- /tab-detail -->
 
@@ -271,8 +271,8 @@
                     <button class="btn-secondary" onclick="loadSample(116, 'fileInputR', 'fileNameDisplayR', 'errorOutputR', runReconcile)">116年度農業特別收入基金預算案</button>
                 </div>
             </div>
-            <div id="statusMessageR" class="message status-message"></div>
-            <div id="errorOutputR" class="message error-message"></div>
+            <div id="statusMessageR" class="message status-message" role="status" aria-live="polite"></div>
+            <div id="errorOutputR" class="message error-message" role="alert"></div>
             <div id="tableContainerR"><p>對帳結果將顯示於此處。</p></div>
         </div><!-- /tab-reconcile -->
 
@@ -285,7 +285,7 @@
                     <button class="btn-main" onclick="convertPasted()">建立表格</button>
                 </div>
             </div>
-            <div id="errorOutputP" class="message error-message"></div>
+            <div id="errorOutputP" class="message error-message" role="alert"></div>
         </div><!-- /tab-paste -->
 
         <div id="tab-unitplan" class="tab-pane">
@@ -299,8 +299,12 @@
         </div><!-- /tab-unitplan -->
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"
+            integrity="sha384-RPl3/z3fjdXhY+fi+x3Ai8ri9BnaFQ2tIZn+wJ4pNmFqp/KvdiIcqMESTEY2MdUz"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"
+            integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw"
+            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js';
 
@@ -1357,6 +1361,160 @@
 
         const _akey = s => (s || '').replace(/[\s　、（）()－\-]/g, '');   // 科目名對帳用正規化
 
+        // 對帳計算（純函式）：說明版 rows ＋ 明細版 parseDetailDoc 結果 → {diff, onlyOne, ok}。
+        // 抽出來是為了讓 test.mjs 能直接驗證對帳結果，不必經過 DOM。
+        function _reconcileRows(nrows, dres) {
+            const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
+            // 彙總到 基金|一級|二級
+            const nMap = new Map(), dMap = new Map(), meta = new Map();
+            // 兩側「計入」的原始明細列（key → [{l1,l2,l3,amount,desc,plan}]），
+            // 供對帳結果展開時做雙欄對齊——只記實際計入彙總的列，母列/被跳過的明細不記。
+            const nDet = new Map(), dDet = new Map();
+            const detPush = (m, k, item) => { if (!m.has(k)) m.set(k, []); m.get(k).push(item); };
+            // 說明版二級金額：優先採用原文寫明的二級合計(如「－捐助、補助與獎助－編列15,241千元」)，
+            // 沒寫合計的基金才退回加總三級明細。兩者不混用，從根本避免小計與明細重複相加。
+            // 以「區塊」為單位：同一二級科目可能有多個區塊，有的寫了合計、有的只列三級明細。
+            // 寫了合計的區塊 → 採合計、跳過其明細(否則重複)；沒寫合計的區塊 → 加總其明細(否則漏算)。
+            const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
+            let curKey = null, blockHasHeader = false;
+            // 母標題句被跳過、其下子句卻全是孤兒(無科目名)時，整個區塊會兩邊都沒算。
+            // 記住該母句金額，等區塊結束仍無任何列計入才補上。限 confirmed(科目名原文
+            // 明寫)——推論來的母句若其 key 在明細側不存在，補上去反而憑空造出單邊差異。
+            let pendingHeader = 0, pendingRow = null, blockCounted = false;
+            const flushBlock = () => {
+                if (pendingHeader && !blockCounted && curKey) {
+                    nMap.set(curKey, (nMap.get(curKey) || 0) + pendingHeader);
+                    const m = meta.get(curKey);
+                    if (m && pendingRow) detPush(nDet, curKey, {
+                        l3: '', l2: m.l2, l1: m.l1, amount: pendingHeader,
+                        desc: pendingRow.description || '', plan: pendingRow.plan || '',
+                    });
+                }
+                pendingHeader = 0; pendingRow = null; blockCounted = false;
+            };
+            const addTo = (fund, plan, l1, l2, v, row, l3name) => {
+                const kk = fund + '|' + _akey(plan) + '|' + _akey(l1) + '|' + _akey(l2);
+                nMap.set(kk, (nMap.get(kk) || 0) + v);
+                if (!meta.has(kk)) meta.set(kk, { fund, plan, l1, l2 });
+                if (row) detPush(nDet, kk, { l3: l3name || '', l2, l1, amount: v, desc: row.description || '', plan: row.plan || '' });
+            };
+            for (const r of nrows) {
+                // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
+                if (r.isSubtotal && r.l2Item) continue;
+                const plan = r.plan || '';   // 對到子計畫層(完整計畫路徑)，只對到大計畫時差異很難追
+                if (!r.l2Item) {
+                    // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
+                    // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
+                    // 這類列本身 l2 為空(否則整筆漏算)，逐一抽出科目金額並歸戶到其二級科目。
+                    // 已被解析器拆成子列的母列(isSubtotal)不可再抽，否則與子列重複計入。
+                    // 其餘 l2 為空的列(含未通過安全閥、未拆的)仍就地抽取，如
+                    // 「編列一般房屋租金3,000千元。」這種科目名接在「編列」之後的寫法。
+                    if (r.l1Item && !r.isSubtotal) {
+                        for (const p of _inlinePairs(r.description)) {
+                            const l2n = _codeToName.get(p.code.slice(0, 2));
+                            if (!l2n) continue;
+                            const l3n = p.code.length >= 3 ? (_codeToName.get(p.code) || '') : '';
+                            addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount, r, l3n);
+                        }
+                    }
+                    flushBlock();
+                    curKey = null; blockHasHeader = false; continue;
+                }
+                const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
+                if (k !== curKey) { flushBlock(); curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
+                if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
+                if (!r.amount) continue;
+                if (r.derived) {                 // 由母列拆出的子列：母列已排除，無條件計入且不影響區塊判斷
+                    nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                    detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
+                    blockCounted = true;
+                    continue;
+                }
+                if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
+                    nMap.set(k, (nMap.get(k) || 0) + r.amount);
+                    detPush(nDet, k, { l3: '', l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
+                    blockHasHeader = true;
+                    blockCounted = true;
+                } else if (r.l3Item && !blockHasHeader && !_SUBTOTAL.test(r.description)) {
+                    nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
+                    detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
+                    blockCounted = true;
+                } else if (r.l3Item && r.confirmed && _SUBTOTAL.test(r.description)) {
+                    pendingHeader += r.amount;                     // 母標題句：子句都歸不了戶時才補計
+                    pendingRow = r;
+                }
+            }
+            flushBlock();   // 收尾：最後一個區塊
+            // 明細表有二級小計列時以它為準；但某些分類只列了三級（未給二級小計），
+            // 例如「分攤」底下只有一筆 分擔其他費用1,860千元 ——只取二級列會整筆漏掉，
+            // 使明細側少算。故：有二級列用二級列，沒有才加總其三級列。
+            const dHdr = new Map(), dLeaf = new Map();
+            for (const r of dres.rows) {
+                const amt = r.amounts['本年度預算'];
+                if (!amt || !r.l2) continue;
+                const plan = r.plan || '';
+                const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
+                if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
+                if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
+                else dLeaf.set(k, (dLeaf.get(k) || 0) + amt * factor);
+                detPush(dDet, k, { l3: r.l3 || '', l2: r.l2, l1: r.l1, amount: amt * factor, desc: '', plan });
+            }
+            for (const k of new Set([...dHdr.keys(), ...dLeaf.keys()])) {
+                dMap.set(k, dHdr.has(k) ? dHdr.get(k) : dLeaf.get(k));
+            }
+            const keys = new Set([...nMap.keys(), ...dMap.keys()]);
+            const diff = [], onlyOne = [], ok = [];
+            // 逐層退讓比對。先用完整計畫路徑(含所有子計畫層)比；對不上的殘留，改用
+            // 少一層的計畫路徑加總再比，一路退到大計畫層為止。
+            // 兩節的計畫層級深度常不同——用途明細表對某些基金只列到第二層(實測農村再生
+            // 基金即是：明細表最深只到「一、農村再生社區發展及環境改善」，第三層子計畫
+            // 只出現在編列說明)——直接丟進「僅一節出現」會製造大量假差異，退到「兩節都
+            // 有的最深層」才既對得上、又把差異鎖在盡量小的範圍。
+            let rest = [];
+            for (const k of keys) {
+                const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
+                const row = { ...meta.get(k), n, d, nRows: nDet.get(k) || [], dRows: dDet.get(k) || [] };
+                if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
+                rest.push(row);
+            }
+            const depthOf = r => (r.plan || '').split(' - ').length;
+            for (let depth = Math.max(1, ...rest.map(depthOf)) - 1; depth >= 1 && rest.length; depth--) {
+                const gN = new Map(), gD = new Map(), gMeta = new Map(), members = new Map();
+                const gNDet = new Map(), gDDet = new Map();   // 退讓時原始明細跟著併到淺層 key
+                for (const row of rest) {
+                    const plan = (row.plan || '').split(' - ').slice(0, depth).join(' - ');
+                    const gk = row.fund + '|' + _akey(plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
+                    const isN = row.n != null, v = isN ? row.n : row.d;
+                    (isN ? gN : gD).set(gk, ((isN ? gN : gD).get(gk) || 0) + v);
+                    if (!gMeta.has(gk)) { gMeta.set(gk, { fund: row.fund, plan, l1: row.l1, l2: row.l2, parts: [] }); members.set(gk, []); }
+                    // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
+                    gMeta.get(gk).parts.push({ plan: row.plan, side: isN ? '說明' : '明細', v });
+                    members.get(gk).push(row);
+                    // 原始明細列：完整 key 下的列併入淺層 key（展開時仍顯示各自的完整計畫路徑）
+                    const src = (isN ? nDet : dDet).get(row.fund + '|' + _akey(row.plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2)) || [];
+                    for (const it of src) {
+                        const m = isN ? gNDet : gDDet;
+                        if (!m.has(gk)) m.set(gk, []);
+                        m.get(gk).push(it);
+                    }
+                }
+                const next = [];
+                for (const gk of new Set([...gN.keys(), ...gD.keys()])) {
+                    const n = gN.has(gk) ? gN.get(gk) : null, d = gD.has(gk) ? gD.get(gk) : null;
+                    if (n == null || d == null) { next.push(...members.get(gk)); continue; }   // 這層仍只有一節 → 再退一層
+                    const row = { ...gMeta.get(gk), n, d, rollup: depth, nRows: gNDet.get(gk) || [], dRows: gDDet.get(gk) || [] };
+                    (n === d ? ok : diff).push({ ...row, delta: n - d });
+                }
+                rest = next;
+            }
+            for (const r of rest) {   // 退到大計畫層仍只有一節：附上兩側原始明細
+                const fullK = r.fund + '|' + _akey(r.plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
+                r.nRows = nDet.get(fullK) || []; r.dRows = dDet.get(fullK) || [];
+            }
+            onlyOne.push(...rest);   // 退到大計畫層仍只有一節出現
+            return { diff, onlyOne, ok };
+        }
+
         async function runReconcile() {
             const el = id => document.getElementById(id);
             const show = _tabShow('R');
@@ -1381,154 +1539,7 @@
                         + `（編列說明側解析到 ${nrows.length} 列）對帳需要同時含兩節的完整預算書。`);
                     return;
                 }
-                const factor = dres.unit === '元' ? 1 : 1000;   // 明細金額 千元→元
-                // 彙總到 基金|一級|二級
-                const nMap = new Map(), dMap = new Map(), meta = new Map();
-                // 兩側「計入」的原始明細列（key → [{l1,l2,l3,amount,desc,plan}]），
-                // 供對帳結果展開時做雙欄對齊——只記實際計入彙總的列，母列/被跳過的明細不記。
-                const nDet = new Map(), dDet = new Map();
-                const detPush = (m, k, item) => { if (!m.has(k)) m.set(k, []); m.get(k).push(item); };
-                // 說明版二級金額：優先採用原文寫明的二級合計(如「－捐助、補助與獎助－編列15,241千元」)，
-                // 沒寫合計的基金才退回加總三級明細。兩者不混用，從根本避免小計與明細重複相加。
-                // 以「區塊」為單位：同一二級科目可能有多個區塊，有的寫了合計、有的只列三級明細。
-                // 寫了合計的區塊 → 採合計、跳過其明細(否則重複)；沒寫合計的區塊 → 加總其明細(否則漏算)。
-                const _SUBTOTAL = /包括|分述如|如[下次]|下列/;
-                let curKey = null, blockHasHeader = false;
-                // 母標題句被跳過、其下子句卻全是孤兒(無科目名)時，整個區塊會兩邊都沒算。
-                // 記住該母句金額，等區塊結束仍無任何列計入才補上。限 confirmed(科目名原文
-                // 明寫)——推論來的母句若其 key 在明細側不存在，補上去反而憑空造出單邊差異。
-                let pendingHeader = 0, pendingRow = null, blockCounted = false;
-                const flushBlock = () => {
-                    if (pendingHeader && !blockCounted && curKey) {
-                        nMap.set(curKey, (nMap.get(curKey) || 0) + pendingHeader);
-                        const m = meta.get(curKey);
-                        if (m && pendingRow) detPush(nDet, curKey, {
-                            l3: '', l2: m.l2, l1: m.l1, amount: pendingHeader,
-                            desc: pendingRow.description || '', plan: pendingRow.plan || '',
-                        });
-                    }
-                    pendingHeader = 0; pendingRow = null; blockCounted = false;
-                };
-                const addTo = (fund, plan, l1, l2, v, row, l3name) => {
-                    const kk = fund + '|' + _akey(plan) + '|' + _akey(l1) + '|' + _akey(l2);
-                    nMap.set(kk, (nMap.get(kk) || 0) + v);
-                    if (!meta.has(kk)) meta.set(kk, { fund, plan, l1, l2 });
-                    if (row) detPush(nDet, kk, { l3: l3name || '', l2, l1, amount: v, desc: row.description || '', plan: row.plan || '' });
-                };
-                for (const r of nrows) {
-                    // 解析器補出的二級母列只為讓表格層級完整，金額與其下明細重複，對帳不可計入
-                    if (r.isSubtotal && r.l2Item) continue;
-                    const plan = r.plan || '';   // 對到子計畫層(完整計畫路徑)，只對到大計畫時差異很難追
-                    if (!r.l2Item) {
-                        // 內嵌式寫法：二級/三級金額只寫在一級標題句中，如
-                        // 「…－編列1,402,000千元，包括補(協)助政府機關(構)891,000千元、捐助國內團體511,000千元」
-                        // 這類列本身 l2 為空(否則整筆漏算)，逐一抽出科目金額並歸戶到其二級科目。
-                        // 已被解析器拆成子列的母列(isSubtotal)不可再抽，否則與子列重複計入。
-                        // 其餘 l2 為空的列(含未通過安全閥、未拆的)仍就地抽取，如
-                        // 「編列一般房屋租金3,000千元。」這種科目名接在「編列」之後的寫法。
-                        if (r.l1Item && !r.isSubtotal) {
-                            for (const p of _inlinePairs(r.description)) {
-                                const l2n = _codeToName.get(p.code.slice(0, 2));
-                                if (!l2n) continue;
-                                const l3n = p.code.length >= 3 ? (_codeToName.get(p.code) || '') : '';
-                                addTo(r.fund, plan, _codeToName.get(p.code[0]) || r.l1Item, l2n, p.amount, r, l3n);
-                            }
-                        }
-                        flushBlock();
-                        curKey = null; blockHasHeader = false; continue;
-                    }
-                    const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1Item) + '|' + _akey(r.l2Item);
-                    if (k !== curKey) { flushBlock(); curKey = k; blockHasHeader = false; }   // 進入新的二級區塊
-                    if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1Item, l2: r.l2Item });
-                    if (!r.amount) continue;
-                    if (r.derived) {                 // 由母列拆出的子列：母列已排除，無條件計入且不影響區塊判斷
-                        nMap.set(k, (nMap.get(k) || 0) + r.amount);
-                        detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
-                        blockCounted = true;
-                        continue;
-                    }
-                    if (r.confirmed && !r.l3Item) {                    // 本區塊原文寫明的二級合計
-                        nMap.set(k, (nMap.get(k) || 0) + r.amount);
-                        detPush(nDet, k, { l3: '', l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
-                        blockHasHeader = true;
-                        blockCounted = true;
-                    } else if (r.l3Item && !blockHasHeader && !_SUBTOTAL.test(r.description)) {
-                        nMap.set(k, (nMap.get(k) || 0) + r.amount);    // 本區塊沒寫合計 → 計入明細
-                        detPush(nDet, k, { l3: r.l3Item, l2: r.l2Item, l1: r.l1Item, amount: r.amount, desc: r.description || '', plan: r.plan || '' });
-                        blockCounted = true;
-                    } else if (r.l3Item && r.confirmed && _SUBTOTAL.test(r.description)) {
-                        pendingHeader += r.amount;                     // 母標題句：子句都歸不了戶時才補計
-                        pendingRow = r;
-                    }
-                }
-                flushBlock();   // 收尾：最後一個區塊
-                // 明細表有二級小計列時以它為準；但某些分類只列了三級（未給二級小計），
-                // 例如「分攤」底下只有一筆 分擔其他費用1,860千元 ——只取二級列會整筆漏掉，
-                // 使明細側少算。故：有二級列用二級列，沒有才加總其三級列。
-                const dHdr = new Map(), dLeaf = new Map();
-                for (const r of dres.rows) {
-                    const amt = r.amounts['本年度預算'];
-                    if (!amt || !r.l2) continue;
-                    const plan = r.plan || '';
-                    const k = r.fund + '|' + _akey(plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
-                    if (!meta.has(k)) meta.set(k, { fund: r.fund, plan, l1: r.l1, l2: r.l2 });
-                    if (!r.l3) dHdr.set(k, (dHdr.get(k) || 0) + amt * factor);
-                    else dLeaf.set(k, (dLeaf.get(k) || 0) + amt * factor);
-                    detPush(dDet, k, { l3: r.l3 || '', l2: r.l2, l1: r.l1, amount: amt * factor, desc: '', plan });
-                }
-                for (const k of new Set([...dHdr.keys(), ...dLeaf.keys()])) {
-                    dMap.set(k, dHdr.has(k) ? dHdr.get(k) : dLeaf.get(k));
-                }
-                const keys = new Set([...nMap.keys(), ...dMap.keys()]);
-                const diff = [], onlyOne = [], ok = [];
-                // 逐層退讓比對。先用完整計畫路徑(含所有子計畫層)比；對不上的殘留，改用
-                // 少一層的計畫路徑加總再比，一路退到大計畫層為止。
-                // 兩節的計畫層級深度常不同——用途明細表對某些基金只列到第二層(實測農村再生
-                // 基金即是：明細表最深只到「一、農村再生社區發展及環境改善」，第三層子計畫
-                // 只出現在編列說明)——直接丟進「僅一節出現」會製造大量假差異，退到「兩節都
-                // 有的最深層」才既對得上、又把差異鎖在盡量小的範圍。
-                let rest = [];
-                for (const k of keys) {
-                    const n = nMap.has(k) ? nMap.get(k) : null, d = dMap.has(k) ? dMap.get(k) : null;
-                    const row = { ...meta.get(k), n, d, nRows: nDet.get(k) || [], dRows: dDet.get(k) || [] };
-                    if (n != null && d != null) { (n === d ? ok : diff).push({ ...row, delta: n - d }); continue; }
-                    rest.push(row);
-                }
-                const depthOf = r => (r.plan || '').split(' - ').length;
-                for (let depth = Math.max(1, ...rest.map(depthOf)) - 1; depth >= 1 && rest.length; depth--) {
-                    const gN = new Map(), gD = new Map(), gMeta = new Map(), members = new Map();
-                    const gNDet = new Map(), gDDet = new Map();   // 退讓時原始明細跟著併到淺層 key
-                    for (const row of rest) {
-                        const plan = (row.plan || '').split(' - ').slice(0, depth).join(' - ');
-                        const gk = row.fund + '|' + _akey(plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2);
-                        const isN = row.n != null, v = isN ? row.n : row.d;
-                        (isN ? gN : gD).set(gk, ((isN ? gN : gD).get(gk) || 0) + v);
-                        if (!gMeta.has(gk)) { gMeta.set(gk, { fund: row.fund, plan, l1: row.l1, l2: row.l2, parts: [] }); members.set(gk, []); }
-                        // 記住併進來的原始子計畫列，否則加總後就看不出差異出在哪個子計畫
-                        gMeta.get(gk).parts.push({ plan: row.plan, side: isN ? '說明' : '明細', v });
-                        members.get(gk).push(row);
-                        // 原始明細列：完整 key 下的列併入淺層 key（展開時仍顯示各自的完整計畫路徑）
-                        const src = (isN ? nDet : dDet).get(row.fund + '|' + _akey(row.plan) + '|' + _akey(row.l1) + '|' + _akey(row.l2)) || [];
-                        for (const it of src) {
-                            const m = isN ? gNDet : gDDet;
-                            if (!m.has(gk)) m.set(gk, []);
-                            m.get(gk).push(it);
-                        }
-                    }
-                    const next = [];
-                    for (const gk of new Set([...gN.keys(), ...gD.keys()])) {
-                        const n = gN.has(gk) ? gN.get(gk) : null, d = gD.has(gk) ? gD.get(gk) : null;
-                        if (n == null || d == null) { next.push(...members.get(gk)); continue; }   // 這層仍只有一節 → 再退一層
-                        const row = { ...gMeta.get(gk), n, d, rollup: depth, nRows: gNDet.get(gk) || [], dRows: gDDet.get(gk) || [] };
-                        (n === d ? ok : diff).push({ ...row, delta: n - d });
-                    }
-                    rest = next;
-                }
-                for (const r of rest) {   // 退到大計畫層仍只有一節：附上兩側原始明細
-                    const fullK = r.fund + '|' + _akey(r.plan) + '|' + _akey(r.l1) + '|' + _akey(r.l2);
-                    r.nRows = nDet.get(fullK) || []; r.dRows = dDet.get(fullK) || [];
-                }
-                onlyOne.push(...rest);   // 退到大計畫層仍只有一節出現
+                const { diff, onlyOne, ok } = _reconcileRows(nrows, dres);
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
