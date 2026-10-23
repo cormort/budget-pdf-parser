@@ -188,6 +188,7 @@
                 <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
                 <button class="btn-secondary" onclick="loadSample(115, 'fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">115年度農業特別收入基金預算案</button>
                 <button class="btn-secondary" onclick="loadSample(116, 'fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">116年度農業特別收入基金預算案</button>
+                <button class="btn-secondary" onclick="loadSample('114final', 'fileInput', 'fileNameDisplay', 'errorOutput', extractPdfText)">114年度農業特別收入基金決算書</button>
             </div>
         </div>
         
@@ -242,6 +243,7 @@
                     <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
                     <button class="btn-secondary" onclick="loadSample(115, 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">115年度農業特別收入基金預算案</button>
                     <button class="btn-secondary" onclick="loadSample(116, 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">116年度農業特別收入基金預算案</button>
+                    <button class="btn-secondary" onclick="loadSample('114final', 'fileInputD', 'fileNameDisplayD', 'errorOutputD', parseDetailPdf)">114年度農業特別收入基金決算書</button>
                 </div>
             </div>
             <div id="statusMessageD" class="message status-message"></div>
@@ -1255,6 +1257,7 @@
         const SAMPLE_PDFS = {
             115: { file: 'examples/moa-fund-115.pdf', label: '115年度農業特別收入基金預算案' },
             116: { file: 'examples/moa-fund-116.pdf', label: '116年度農業特別收入基金預算案' },
+            '114final': { file: 'examples/moa-fund-114-final.pdf', label: '114年度農業特別收入基金決算書' },
         };
         async function loadSample(year, inputId, displayId, errorId, run) {
             const err = document.getElementById(errorId);
