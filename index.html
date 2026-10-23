@@ -263,6 +263,7 @@
                     <select id="fundFilterR" style="display:none" onchange="_filterReconcile()">
                         <option value="">全部基金</option>
                     </select>
+                    <button id="exportBtnR" class="btn-success" style="display:none" onclick="exportReconcile()">匯出 xlsx</button>
                 </div>
                 <div class="controls" style="margin-top:10px;">
                     <span style="color:var(--fg-500); font-size:13px;">沒有檔案？載入範例：</span>
@@ -1362,6 +1363,7 @@
             const fi = el('fileInputR');
             if (!fi.files || !fi.files.length) { show('errorOutput', '請先選擇 PDF。'); return; }
             el('extractBtnR').disabled = true;
+            el('exportBtnR').style.display = 'none';
             try {
                 show('statusMessage', '解析中...');
                 const buf = new Uint8Array(await fi.files[0].arrayBuffer());
@@ -1530,10 +1532,32 @@
                 _reconcileData = { diff, onlyOne, ok };
                 _populateFundFilter(diff, onlyOne, ok);
                 _renderReconcile(diff, onlyOne, ok);
+                el('exportBtnR').style.display = '';
                 show('statusMessage', _reconcileSummary(diff, onlyOne, ok));
             } catch (e) { console.error(e); show('errorOutput', '對帳失敗：' + e.message); }
             finally { el('extractBtnR').disabled = false; }
         }
+
+        // 兩側原始明細 → 依科目（正規化名）配對成「對齊行」：說明側順序為主，
+        // 明細側多出的列接在後。配對成功的同一行左右金額並排，一眼看出差異在哪個科目。
+        const _alignPair = (nRows, dRows) => {
+            const rows = [];
+            const dUsed = new Set();
+            for (const r of nRows || []) {
+                const nk = _akey(r.l3 || r.l2);
+                let d = null;
+                for (let i = 0; i < (dRows || []).length; i++) {
+                    if (dUsed.has(i)) continue;
+                    if (_akey(dRows[i].l3 || dRows[i].l2) === nk) { d = dRows[i].amount; dUsed.add(i); break; }
+                }
+                rows.push({ name: r.l3 || r.l2, n: r.amount, d, ndesc: r.desc, nplan: r.plan });
+            }
+            for (let i = 0; i < (dRows || []).length; i++) {
+                if (dUsed.has(i)) continue;
+                rows.push({ name: dRows[i].l3 || dRows[i].l2, n: null, d: dRows[i].amount, ndesc: '', dplan: dRows[i].plan });
+            }
+            return rows;
+        };
 
         function _renderReconcile(diff, onlyOne, ok) {
             // 顯示單位千元：預算書原文就是千元，換算回去才好直接跟 PDF 文字對讀
@@ -1542,26 +1566,6 @@
             diff.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
             onlyOne.sort((a, b) => (b.n ?? b.d) - (a.n ?? a.d));
 
-            // 兩側原始明細 → 依科目（正規化名）配對成「對齊行」：說明側順序為主，
-            // 明細側多出的列接在後。配對成功的同一行左右金額並排，一眼看出差異在哪個科目。
-            const alignPair = (nRows, dRows) => {
-                const rows = [];
-                const dUsed = new Set();
-                for (const r of nRows || []) {
-                    const nk = _akey(r.l3 || r.l2);
-                    let d = null;
-                    for (let i = 0; i < (dRows || []).length; i++) {
-                        if (dUsed.has(i)) continue;
-                        if (_akey(dRows[i].l3 || dRows[i].l2) === nk) { d = dRows[i].amount; dUsed.add(i); break; }
-                    }
-                    rows.push({ name: r.l3 || r.l2, n: r.amount, d, ndesc: r.desc, nplan: r.plan });
-                }
-                for (let i = 0; i < (dRows || []).length; i++) {
-                    if (dUsed.has(i)) continue;
-                    rows.push({ name: dRows[i].l3 || dRows[i].l2, n: null, d: dRows[i].amount, ndesc: '', dplan: dRows[i].plan });
-                }
-                return rows;
-            };
             const deltaCell = (n, d) => {
                 if (n == null || d == null) return '<td class="recon-amt recon-missing">—</td>';
                 const dv = n - d;
@@ -1573,7 +1577,7 @@
             // 展開後是「編列說明側｜明細表側」的雙欄對齊明細＋合計行。
             const itemHtml = (r, open) => {
                 const nRows = r.nRows || [], dRows = r.dRows || [];
-                const pair = alignPair(nRows, dRows);
+                const pair = _alignPair(nRows, dRows);
                 const sumN = pair.reduce((s, x) => s + (x.n || 0), 0);
                 const sumD = pair.reduce((s, x) => s + (x.d || 0), 0);
                 const planTop = (r.plan || '').split(' - ')[0];
@@ -1668,6 +1672,28 @@
             const st = document.getElementById('statusMessageR');
             st.textContent = (fund ? fund + ' — ' : '') + _reconcileSummary(filter(diff), filter(onlyOne), filter(ok));
             st.style.display = 'block';
+        }
+
+        // 匯出目前基金篩選下的對帳結果（千元，與畫面一致）：總表一列一項；科目明細＝展開卡片的雙欄對齊
+        function exportReconcile() {
+            const fund = document.getElementById('fundFilterR').value;
+            const pick = arr => fund ? arr.filter(r => r.fund === fund) : arr;
+            const { diff, onlyOne, ok } = _reconcileData;
+            const k = v => v == null ? '' : v / 1000;
+            const items = [...pick(diff).map(r => ['金額不一致', r]), ...pick(onlyOne).map(r => [r.n != null ? '僅編列說明有' : '僅用途明細表有', r]), ...pick(ok).map(r => ['相符', r])];
+            const planParts = r => [(r.plan || '').split(' - ')[0], (r.plan || '').split(' - ').slice(1).join(' - ')];
+            const summary = [['結果', '基金', '計畫', '子計畫', '一級科目', '二級科目', '編列說明(千元)', '用途明細表(千元)', '差額(千元)'],
+                ...items.map(([kind, r]) => [kind, r.fund, ...planParts(r), r.l1, r.l2, k(r.n), k(r.d), r.n != null && r.d != null ? k(r.n - r.d) : ''])];
+            const detail = [['結果', '基金', '計畫', '子計畫', '一級科目', '二級科目', '科目（雙欄對齊）', '編列說明側(千元)', '明細表側(千元)', '行差額(千元)', '編列說明']];
+            for (const [kind, r] of items) {
+                if (kind === '相符') continue;
+                for (const x of _alignPair(r.nRows, r.dRows))
+                    detail.push([kind, r.fund, ...planParts(r), r.l1, r.l2, x.name, k(x.n), k(x.d), x.n != null && x.d != null ? k(x.n - x.d) : '', x.ndesc || '']);
+            }
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), '對帳總表');
+            XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), '不一致與僅一節明細');
+            XLSX.writeFile(wb, '金額一致性對帳.xlsx');
         }
 
         function _expandItem(it) {
